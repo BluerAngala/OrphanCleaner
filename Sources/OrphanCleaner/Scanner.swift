@@ -272,9 +272,35 @@ struct OrphanScanner {
 
     static func scan(installed: InstalledAppIndex, includeEmptyDirs: Bool = false) -> [ScanLocation: [OrphanItem]] {
         var results: [ScanLocation: [OrphanItem]] = [:]
+        var emptyItems: [OrphanItem] = []
 
-        for location in ScanLocation.allCases {
-            results[location] = scanLocation(location, installed: installed, includeEmptyDirs: includeEmptyDirs)
+        for location in ScanLocation.scanLocations {
+            let items = scanLocation(location, installed: installed, includeEmptyDirs: includeEmptyDirs)
+            if includeEmptyDirs {
+                // 把空目录抽到虚拟分类
+                var normalItems: [OrphanItem] = []
+                for item in items {
+                    if item.size == 0 {
+                        let e = OrphanItem(
+                            name: item.name,
+                            path: item.path,
+                            location: .emptyDirs,
+                            size: item.size,
+                            isDirectory: item.isDirectory
+                        )
+                        emptyItems.append(e)
+                    } else {
+                        normalItems.append(item)
+                    }
+                }
+                results[location] = normalItems
+            } else {
+                results[location] = items
+            }
+        }
+
+        if !emptyItems.isEmpty {
+            results[.emptyDirs] = emptyItems
         }
 
         return results

@@ -1,641 +1,759 @@
 import SwiftUI
+import AppKit
 
-// MARK: - 主内容视图
+// MARK: - Design Tokens — 温暖米色系
+enum Cln {
+    // 底色
+    static let bg = Color(red: 0.965, green: 0.957, blue: 0.941)     // #F6F4F0
+    static let surface = Color.white
+    static let surfaceSub = Color(red: 0.984, green: 0.976, blue: 0.969) // #FBF9F7
+    static let border = Color(red: 0.898, green: 0.878, blue: 0.855)    // #E5E0DA
+    static let borderLight = Color(red: 0.933, green: 0.918, blue: 0.898) // #EEEAE5
+    
+    // 文字
+    static let text = Color(red: 0.173, green: 0.149, blue: 0.129)    // #2C2621
+    static let text2 = Color(red: 0.569, green: 0.522, blue: 0.478)   // #91857A
+    static let text3 = Color(red: 0.737, green: 0.698, blue: 0.659)   // #BCB2A8
+    
+    // 强调色 — 陶土色（独特且有温度）
+    static let accent = Color(red: 0.776, green: 0.482, blue: 0.361)  // #C67B5C
+    static let accentDim = Color(red: 0.776, green: 0.482, blue: 0.361, opacity: 0.1)
+    static let accentLight = Color(red: 0.776, green: 0.482, blue: 0.361, opacity: 0.06)
+    
+    // 语义色 — 鼠尾草绿 / 暖琥珀
+    static let green = Color(red: 0.478, green: 0.620, blue: 0.494)   // #7A9E7E
+    static let greenDim = Color(red: 0.478, green: 0.620, blue: 0.494, opacity: 0.1)
+    static let amber = Color(red: 0.890, green: 0.592, blue: 0.216)   // #E39737
+    static let amberDim = Color(red: 0.890, green: 0.592, blue: 0.216, opacity: 0.1)
+    static let red = Color(red: 0.812, green: 0.333, blue: 0.333)     // #CF5555
+    
+    static let mono = "SF Mono"
+    static let sans = "SF Pro"
+}
+
+// MARK: - 主视图
 struct ContentView: View {
     @EnvironmentObject var vm: CleanerViewModel
-    @State private var showDeleteConfirm = false
+    @State private var showCleanConfirm = false
     
-    private var isScanning: Bool {
+    private var isBusy: Bool {
         if case .scanning = vm.scanState { return true }
-        return false
-    }
-    
-    private var isCleaning: Bool {
         if case .cleaning = vm.cleanState { return true }
         return false
     }
     
     var body: some View {
-        HSplitView {
-            // 左侧面板：统计 + 操作
-            leftPanel
-                .frame(minWidth: 260, idealWidth: 300)
-            
-            // 右侧面板：扫描结果
-            rightPanel
-                .frame(minWidth: 420)
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .alert("确认清理", isPresented: $showDeleteConfirm) {
-            Button("取消", role: .cancel) { }
-            Button("确认清理", role: .destructive) { vm.startClean() }
-        } message: {
-            let count = vm.selectedOrphans.count
-            let size = ByteCountFormatter.string(fromByteCount: vm.selectedTotalSize, countStyle: .file)
-            Text("将清理 \(count) 项，释放 \(size)\n\n操作会移到废纸篓，需要时可恢复。继续吗？")
-        }
-    }
-    
-    // MARK: - 左侧面板
-    private var leftPanel: some View {
         VStack(spacing: 0) {
-            headerView
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+            // ── 顶栏 ──
+            topBar
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
             
-            Divider()
+            // ── 统计仪表盘 ──
+            if case .complete = vm.scanState {
+                statsDashboard
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+            }
             
-            actionSection
-                .padding(20)
+            Divider().overlay(Cln.border)
             
-            Divider()
+            // ── 主内容 ──
+            mainContent
             
-            statsSection
-                .padding(20)
-            
-            Spacer()
-            
-            statusBar
-                .padding(12)
-                .background(Color(nsColor: .underPageBackgroundColor))
-        }
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-    
-    // MARK: - 右侧面板
-    private var rightPanel: some View {
-        Group {
-            switch vm.scanState {
-            case .idle:
-                welcomeView
-            case .scanning(let progress):
-                scanningView(progress: progress)
-            case .complete(let found, _):
-                if found == 0 {
-                    emptyView
-                } else {
-                    resultsView
-                }
-            case .error(let msg):
-                errorView(msg: msg)
+            // ── 底栏 ──
+            if !vm.allOrphans.isEmpty {
+                bottomBar
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(Cln.bg)
+        .preferredColorScheme(.light)
+        .alert("确认清理", isPresented: $showCleanConfirm) {
+            Button("取消", role: .cancel) { }
+            Button("移入废纸篓", role: .destructive) { vm.startClean() }
+        } message: {
+            let c = vm.selectedOrphans.count
+            let s = ByteCountFormatter.string(fromByteCount: vm.selectedTotalSize, countStyle: .file)
+            Text("将清理 \(c) 项，释放 \(s)。文件会移到废纸篓，可恢复。")
+        }
     }
-}
-
-// MARK: - 子视图
-extension ContentView {
     
-    // MARK: 标题
-    private var headerView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+    // MARK: - 顶栏
+    private var topBar: some View {
+        HStack(spacing: 0) {
+            // 品牌（仅此一处）
             HStack(spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .frame(width: 34, height: 34)
+                        .fill(Cln.accentLight)
+                        .frame(width: 32, height: 32)
                     Image(systemName: "trash.slash")
-                        .font(.title3)
-                        .foregroundColor(.accentColor)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(Cln.accent)
                 }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("残留清理助手")
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    Text("检测并清理已卸载软件残留")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                Text("残留清理助手")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(Cln.text)
+            }
+            
+            Spacer()
+            
+            // 右侧操作区
+            HStack(spacing: 10) {
+                // 空目录开关（扫描完成后显示）
+                if case .complete = vm.scanState {
+                    emptyDirToggle
+                }
+                scanButton
+                if !vm.allOrphans.isEmpty {
+                    cleanButton
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
     
-    // MARK: 操作区
-    private var actionSection: some View {
-        VStack(spacing: 12) {
-            Button(action: { vm.startScan() }) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                    Text("一键检测")
+    // ── 子组件：空目录开关 ──
+    private var emptyDirToggle: some View {
+        HStack(spacing: 5) {
+            Text("空目录")
+                .font(.system(size: 11))
+                .foregroundColor(Cln.text2)
+            Toggle(isOn: $vm.showEmptyDirs) { }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .scaleEffect(0.85)
+                .onChange(of: vm.showEmptyDirs) { _ in
+                    vm.startScan()
                 }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.accentColor)
-            .disabled(isScanning)
-            
-            if !vm.allOrphans.isEmpty {
-                Button(action: { showDeleteConfirm = true }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "trash")
-                        Text("一键清理选中")
-                    }
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(vm.selectedOrphans.isEmpty || isCleaning)
-                
-                HStack(spacing: 16) {
-                    Button("全选") { withAnimation(.easeOut(duration: 0.15)) { vm.selectAll() } }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundColor(.accentColor)
-                    Button("取消全选") { withAnimation(.easeOut(duration: 0.15)) { vm.deselectAll() } }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            
-            // 清理反馈
-            if case .cleaning(let progress) = vm.cleanState {
-                HStack(spacing: 8) {
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Cln.surfaceSub)
+        .cornerRadius(6)
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Cln.borderLight, lineWidth: 1))
+    }
+    
+    // ── 子组件：扫描按钮 ──
+    private var scanButton: some View {
+        Button(action: { vm.startScan() }) {
+            HStack(spacing: 5) {
+                if case .scanning = vm.scanState {
                     ProgressView()
-                        .scaleEffect(0.8)
+                        .scaleEffect(0.55)
                         .controlSize(.small)
-                    Text(progress)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        .frame(width: 10, height: 10)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 10))
+                }
+                Text(isBusy ? "扫描中..." : "扫描检测")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Cln.accent.opacity(isBusy ? 0.5 : 1))
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .disabled(isBusy)
+    }
+    
+    // ── 子组件：清理按钮 ──
+    private var cleanButton: some View {
+        Button(action: { showCleanConfirm = true }) {
+            HStack(spacing: 5) {
+                Image(systemName: "trash")
+                    .font(.system(size: 10))
+                Text("清理")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(vm.selectedOrphans.isEmpty ? Cln.text3 : Cln.amber)
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .disabled(vm.selectedOrphans.isEmpty || isBusy)
+    }
+    
+    // MARK: - 统计仪表盘
+    private var statsDashboard: some View {
+        Group {
+            if case .complete(let found, let total) = vm.scanState {
+            let catCount = vm.orphans.filter { !$0.value.isEmpty && $0.key != .emptyDirs }.count
+            let maxItemSize = vm.allOrphans.map(\.size).max() ?? 0
+            let maxItemFormatted = maxItemSize > 0
+                ? byteString(maxItemSize)
+                : "—"
+            let selFormatted = ByteCountFormatter.string(fromByteCount: vm.selectedTotalSize, countStyle: .file)
+            let totalFormatted = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+            
+            HStack(spacing: 0) {
+                Spacer()
+                
+                // 统计项居中排列
+                HStack(spacing: 24) {
+                    // 总残留
+                    statBlock(
+                        value: "\(found)",
+                        label: "残留项",
+                        sub: totalFormatted,
+                        color: found > 0 ? Cln.amber : Cln.green
+                    )
+                    
+                    // 分隔
+                    Capsule().fill(Cln.borderLight).frame(width: 1, height: 32)
+                    
+                    // 已选待清理
+                    statBlock(
+                        value: "\(vm.selectedOrphans.count)",
+                        label: "待清理",
+                        sub: vm.selectedOrphans.isEmpty ? "—" : selFormatted,
+                        color: vm.selectedOrphans.isEmpty ? Cln.text3 : Cln.amber
+                    )
+                    
+                    Capsule().fill(Cln.borderLight).frame(width: 1, height: 32)
+                    
+                    // 涉及分类数
+                    statBlock(
+                        value: "\(catCount)",
+                        label: "涉及分类",
+                        sub: "共 \(ScanLocation.scanLocations.count) 个目录",
+                        color: Cln.accent
+                    )
+                    
+                    Capsule().fill(Cln.borderLight).frame(width: 1, height: 32)
+                    
+                    // 最大单项
+                    statBlock(
+                        value: maxItemFormatted,
+                        label: "最大单项",
+                        sub: found > 0 ? "占比 \((maxItemSize > 0 && total > 0) ? String(format: "%.1f%%", Double(maxItemSize) / Double(total) * 100) : "—")" : "—",
+                        color: Cln.accent
+                    )
+                }
+                
+                Spacer()
+            }
+                .padding(.vertical, 12)
+                .padding(.horizontal, 16)
+                .background(Cln.surface)
+                .cornerRadius(10)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Cln.borderLight, lineWidth: 1))
+            }
+        }
+    }
+    
+    // ── 统计块（居中用）──
+    private func statBlock(value: String, label: String, sub: String, color: Color) -> some View {
+        VStack(spacing: 3) {
+            Text(value)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(Cln.text)
+                .monospacedDigit()
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(Cln.text2)
+            Text(sub)
+                .font(.custom(Cln.mono, size: 9))
+                .foregroundColor(color)
+        }
+        .frame(minWidth: 80)
+    }
+    
+    // ── 格式化字节为简洁字符串（用于最大项等场景）──
+    private func byteString(_ size: Int64) -> String {
+        if size >= 1_048_576 {
+            return String(format: "%.1f MB", Double(size) / 1_048_576)
+        } else if size >= 1024 {
+            return String(format: "%.1f KB", Double(size) / 1024)
+        } else {
+            return "\(size) B"
+        }
+    }
+    
+    // MARK: - 主内容
+    @ViewBuilder
+    private var mainContent: some View {
+        switch vm.scanState {
+        case .idle:
+            emptyState
+        case .scanning(let p):
+            scanningState(p)
+        case .complete(let found, _):
+            if found == 0 {
+                cleanState
+            } else {
+                resultsList
+            }
+        case .error(let m):
+            errorState(m)
+        }
+    }
+    
+    // MARK: - 空状态
+    private var emptyState: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .stroke(Cln.border, lineWidth: 1)
+                        .frame(width: 64, height: 64)
+                    Circle()
+                        .stroke(Cln.accent.opacity(0.2), lineWidth: 1)
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "trash.slash")
+                        .font(.system(size: 20))
+                        .foregroundColor(Cln.accent.opacity(0.6))
+                }
+                
+                Text("检测并清理已卸载软件留下的缓存和配置残留")
+                    .font(.system(size: 13))
+                    .foregroundColor(Cln.text2)
+                    .frame(maxWidth: 280)
+                    .multilineTextAlignment(.center)
+                
+                scanButton
+                    .controlSize(.large)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - 扫描中
+    private func scanningState(_ p: String) -> some View {
+        VStack(spacing: 14) {
+            Spacer()
+            ProgressView()
+                .scaleEffect(0.8)
+                .controlSize(.small)
+                .tint(Cln.accent)
+            Text(p)
+                .font(.system(size: 12))
+                .foregroundColor(Cln.text2)
+                .monospacedDigit()
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - 系统干净
+    private var cleanState: some View {
+        VStack(spacing: 14) {
+            Spacer()
+            ZStack {
+                Circle()
+                    .stroke(Cln.green.opacity(0.15), lineWidth: 1)
+                    .frame(width: 64, height: 64)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundColor(Cln.green)
+            }
+            Text("系统很干净")
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(Cln.text)
+            Text("没有发现已卸载软件的残留数据")
+                .font(.system(size: 12))
+                .foregroundColor(Cln.text2)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - 错误
+    private func errorState(_ m: String) -> some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "xmark.octagon.fill")
+                .font(.system(size: 24))
+                .foregroundColor(Cln.red)
+            Text("扫描出错")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(Cln.text)
+            Text(m)
+                .font(.system(size: 11))
+                .foregroundColor(Cln.text2)
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    // MARK: - 结果列表（树形分组）
+    private var resultsList: some View {
+        VStack(spacing: 0) {
+            // 反馈区
+            feedbackSection
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(ScanLocation.allCases) { loc in
+                        let items = vm.orphans[loc] ?? []
+                        if !items.isEmpty {
+                            TreeSection(location: loc, items: items, maxSize: vm.allOrphans.map(\.size).max() ?? 1)
+                                .environmentObject(vm)
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+    
+    // MARK: - 反馈区
+    @ViewBuilder
+    private var feedbackSection: some View {
+        Group {
+            if case .cleaning(let p) = vm.cleanState {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.6).controlSize(.small)
+                    Text(p).font(.system(size: 11)).foregroundColor(Cln.text2)
                 }
                 .padding(10)
-                .frame(maxWidth: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Cln.surfaceSub)
+                .cornerRadius(8)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Cln.borderLight, lineWidth: 1))
+            }
+            
+            if case .complete(let d, let f) = vm.cleanState {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill").font(.caption).foregroundColor(Cln.green)
+                    Text("已清理 \(d) 项，释放 \(ByteCountFormatter.string(fromByteCount: f, countStyle: .file))")
+                        .font(.system(size: 11)).foregroundColor(Cln.green)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Cln.greenDim)
                 .cornerRadius(8)
             }
             
-            if case .complete(let deleted, let freed) = vm.cleanState {
-                Label("已清理 \(deleted) 项，释放 \(ByteCountFormatter.string(fromByteCount: freed, countStyle: .file))",
-                      systemImage: "checkmark.circle.fill")
-                    .font(.caption)
-                    .foregroundColor(.green)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.green.opacity(0.08))
-                    .cornerRadius(8)
-            }
-            
-            if case .partial(let deleted, let failed, let protected) = vm.cleanState {
+            if case .partial(let d, let failed, let prot) = vm.cleanState {
                 VStack(alignment: .leading, spacing: 4) {
-                    Label("已清理 \(deleted) 项，\(failed.count) 项失败\(protected.isEmpty ? "" : "，\(protected.count) 项受保护已跳过")",
-                          systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                    ForEach(failed, id: \.0) { name, reason in
-                        Text("\(name): \(reason)")
-                            .font(.caption2)
-                            .foregroundColor(.red)
-                            .padding(.leading, 16)
-                    }
-                    if !protected.isEmpty {
-                        Text("受保护路径（已自动跳过）：")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 16)
-                        ForEach(protected, id: \.self) { name in
-                            Text("🛡 \(name)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 16)
-                        }
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundColor(Cln.amber)
+                        Text("清理完成：\(d) 项成功")
+                            .font(.system(size: 11)).foregroundColor(Cln.amber)
+                        if !failed.isEmpty { Text("· \(failed.count) 项失败").font(.system(size: 11)).foregroundColor(Cln.red) }
+                        if !prot.isEmpty { Text("· \(prot.count) 项受保护跳过").font(.system(size: 11)).foregroundColor(Cln.text2) }
                     }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.08))
+                .background(Cln.amberDim)
                 .cornerRadius(8)
             }
         }
     }
     
-    // MARK: 统计区
-    private var statsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("统计", systemImage: "chart.pie")
-                .font(.headline)
-                .foregroundColor(.secondary)
-            
-            if case .complete(let found, let total) = vm.scanState {
-                StatCard(label: "发现残留", value: "\(found) 项",
-                        icon: "exclamationmark.triangle", color: .orange)
-                StatCard(label: "可释放空间", value: ByteCountFormatter.string(fromByteCount: total, countStyle: .file),
-                        icon: "externaldrive", color: .blue)
-                
-                Toggle(isOn: $vm.showEmptyDirs) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder")
-                            .foregroundColor(.secondary)
-                        Text("包含空目录")
-                            .font(.caption)
-                    }
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .onChange(of: vm.showEmptyDirs) { _ in vm.startScan() }
-                
-                if !vm.selectedOrphans.isEmpty {
-                    Divider()
-                    StatCard(label: "已选择清理", value: "\(vm.selectedOrphans.count) 项",
-                            icon: "checkmark.circle", color: .green)
-                    StatCard(label: "将释放", value: ByteCountFormatter.string(fromByteCount: vm.selectedTotalSize, countStyle: .file),
-                            icon: "arrow.down", color: .green)
-                }
-            } else {
-                Text("点击「一键检测」开始扫描")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 4)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    
-    // MARK: 底部状态栏
-    private var statusBar: some View {
-        HStack(spacing: 6) {
-            switch vm.scanState {
-            case .idle:
-                Circle().fill(.secondary).frame(width: 6, height: 6)
-                Text("就绪")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            case .scanning(let progress):
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: 12, height: 12)
-                Text(progress)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            case .complete(let found, _):
-                Circle().fill(found == 0 ? Color.green : Color.orange).frame(width: 6, height: 6)
-                Text(found == 0 ? "系统干净" : "发现 \(found) 项残留")
-                    .font(.caption)
-                    .foregroundColor(found == 0 ? .green : .orange)
-            case .error(let msg):
-                Circle().fill(.red).frame(width: 6, height: 6)
-                Text(msg)
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    
-    // MARK: 欢迎页
-    private var welcomeView: some View {
+    // MARK: - 底栏
+    private var bottomBar: some View {
         VStack(spacing: 0) {
-            Spacer()
-            
-            VStack(spacing: 20) {
-                Image(systemName: "trash.slash")
-                    .font(.system(size: 40))
-                    .foregroundColor(.accentColor.opacity(0.5))
-                
-                VStack(spacing: 6) {
-                    Text("欢迎使用残留清理助手")
-                        .font(.title2)
-                        .fontWeight(.medium)
-                    Text("比对已安装应用，找出已卸载软件的缓存残留")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(ScanLocation.allCases) { loc in
-                        HStack(spacing: 10) {
-                            Image(systemName: loc.icon)
-                                .foregroundColor(.accentColor)
-                                .font(.body)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(loc.rawValue)
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                                Text("~/Library/\(loc.rawValue)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, 16)
-                .padding(.horizontal, 20)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .cornerRadius(12)
-            }
-            .padding(32)
-            
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-    
-    // MARK: 扫描中
-    private func scanningView(progress: String) -> some View {
-        VStack(spacing: 16) {
-            Spacer()
-            ProgressView()
-                .scaleEffect(1.2)
-                .controlSize(.large)
-            Text(progress)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-    
-    // MARK: 无残留
-    private var emptyView: some View {
-        VStack(spacing: 16) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.green)
-            Text("系统很干净，没有发现残留！")
-                .font(.title3)
-                .fontWeight(.medium)
-            Text("所有已安装应用的缓存数据都正常")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
-    }
-    
-    // MARK: 错误
-    private func errorView(msg: String) -> some View {
-        VStack(spacing: 12) {
-            Spacer()
-            Image(systemName: "xmark.octagon.fill")
-                .font(.system(size: 36))
-                .foregroundColor(.red)
-            Text("扫描出错")
-                .font(.title3)
-            Text(msg)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            Spacer()
-        }
-    }
-    
-    // MARK: 结果列表（含可折叠分区）
-    private var resultsView: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                // 结果标题栏
-                HStack {
-                    Label("扫描结果", systemImage: "list.bullet.rectangle")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text("\(vm.allOrphans.count) 项残留 · \(ByteCountFormatter.string(fromByteCount: vm.totalSize, countStyle: .file))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 4)
-                
-                // 各分区
-                ForEach(ScanLocation.allCases) { location in
-                    let items = vm.orphans[location] ?? []
-                    if !items.isEmpty {
-                        LocationCard(location: location, items: items)
-                    }
-                }
-            }
-            .padding(20)
-        }
-    }
-}
-
-// MARK: - 可折叠分区卡片
-struct LocationCard: View {
-    @EnvironmentObject var vm: CleanerViewModel
-    let location: ScanLocation
-    let items: [OrphanItem]
-    @State private var isExpanded: Bool = true
-    
-    private var allSelected: Bool {
-        items.allSatisfy { vm.selectedItems.contains($0.id) }
-    }
-    
-    private var sectionSize: Int64 {
-        items.reduce(0) { $0 + $1.size }
-    }
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // 分区标题行（可点击折叠/展开）
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { isExpanded.toggle() } }) {
-                HStack(spacing: 10) {
-                    // 折叠箭头
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .animation(.easeInOut(duration: 0.2), value: isExpanded)
-                    
-                    // 全选勾
-                    Button(action: { vm.toggleAll(for: location) }) {
-                        Image(systemName: allSelected ? "checkmark.circle.fill" : "circle")
-                            .foregroundColor(allSelected ? .accentColor : .secondary)
-                            .font(.body)
-                    }
-                    .buttonStyle(.plain)
-                    .help("全选/取消全选此分区")
-                    
-                    // 图标 + 名称
-                    Image(systemName: location.icon)
-                        .foregroundColor(.accentColor)
-                        .font(.body)
-                    Text(location.rawValue)
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                    
-                    // 统计
-                    HStack(spacing: 12) {
-                        Text("\(items.count) 项")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                        Text(ByteCountFormatter.string(fromByteCount: sectionSize, countStyle: .file))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-                .padding(.vertical, 10)
-                .padding(.horizontal, 14)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            
-            // 折叠内容
-            if isExpanded {
-                Divider()
-                    .padding(.horizontal, 14)
-                
-                VStack(spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        OrphanRow(item: item)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 3)
-                        
-                        if index < items.count - 1 {
-                            Divider()
-                                .padding(.leading, 40)
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .cornerRadius(10)
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
-        )
-    }
-}
-
-// MARK: - 条目行（带大小进度条）
-struct OrphanRow: View {
-    @EnvironmentObject var vm: CleanerViewModel
-    let item: OrphanItem
-    
-    @State private var isHovered = false
-    
-    private var isSelected: Bool {
-        vm.selectedItems.contains(item.id)
-    }
-    
-    var body: some View {
-        Button(action: { toggle() }) {
-            HStack(spacing: 10) {
-                // 勾选框
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(isSelected ? .accentColor : .secondary.opacity(0.6))
-                    .font(.body)
-                
-                // 图标
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                        .frame(width: 22, height: 22)
-                    Image(systemName: item.categoryIcon)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                
-                // 名称
-                HStack(spacing: 4) {
-                    Text(item.name)
-                        .font(.body)
-                        .foregroundColor(.primary)
-                        .lineLimit(1)
-                    if item.size == 0 {
-                        Text("空")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color(nsColor: .windowBackgroundColor))
-                            .cornerRadius(3)
+            Divider().overlay(Cln.border)
+            HStack(spacing: 16) {
+                // 左侧：选择状态
+                HStack(spacing: 8) {
+                    Image(systemName: vm.selectedOrphans.isEmpty ? "circle" : "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(vm.selectedOrphans.isEmpty ? Cln.border : Cln.accent)
+                    Text("已选 \(vm.selectedOrphans.count) / \(vm.allOrphans.count) 项")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(Cln.text)
+                    if !vm.selectedOrphans.isEmpty {
+                        Text("· 将释放 \(ByteCountFormatter.string(fromByteCount: vm.selectedTotalSize, countStyle: .file))")
+                            .font(.custom(Cln.mono, size: 10))
+                            .foregroundColor(Cln.amber)
                     }
                 }
                 
                 Spacer()
                 
-                // 大小（用进度条指示相对大小）
-                HStack(spacing: 6) {
-                    if vm.scanState != .idle {
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color(nsColor: .controlBackgroundColor))
-                                    .frame(width: 60, height: 4)
-                                RoundedRectangle(cornerRadius: 2)
-                                    .fill(Color.accentColor.opacity(0.5))
-                                    .frame(width: relativeWidth(totalWidth: 60), height: 4)
-                            }
-                        }
-                        .frame(width: 60, height: 4)
-                    }
+                // 右侧：操作
+                HStack(spacing: 10) {
+                    Button("全选") { withAnimation { vm.selectAll() } }
+                        .font(.system(size: 11))
+                        .foregroundColor(Cln.accent)
+                        .buttonStyle(.plain)
+                    Button("取消") { withAnimation { vm.deselectAll() } }
+                        .font(.system(size: 11))
+                        .foregroundColor(Cln.text2)
+                        .buttonStyle(.plain)
                     
-                    Text(item.sizeFormatted)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                        .frame(width: 72, alignment: .trailing)
+                    Divider().frame(height: 16).overlay(Cln.border)
+                    
+                    Button(action: { showCleanConfirm = true }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                            Text("清理选中 (\(vm.selectedOrphans.count))")
+                                .font(.system(size: 11, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(vm.selectedOrphans.isEmpty ? Cln.text3 : Cln.amber)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.selectedOrphans.isEmpty || isBusy)
                 }
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .background(isHovered ? Color(nsColor: .selectedControlTextColor).opacity(0.05) : Color.clear)
-            .cornerRadius(4)
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-    
-    private func relativeWidth(totalWidth: CGFloat) -> CGFloat {
-        let maxSize = vm.allOrphans.map(\.size).max() ?? 1
-        guard maxSize > 0 else { return 0 }
-        return CGFloat(item.size) / CGFloat(maxSize) * totalWidth
-    }
-    
-    private func toggle() {
-        withAnimation(.easeOut(duration: 0.12)) {
-            if isSelected {
-                vm.selectedItems.remove(item.id)
-            } else {
-                vm.selectedItems.insert(item.id)
-            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .background(Cln.surface)
         }
     }
 }
 
-// MARK: - 统计卡片
-struct StatCard: View {
-    let label: String
-    let value: String
-    let icon: String
-    let color: Color
+// MARK: - 树形分组
+struct TreeSection: View {
+    @EnvironmentObject var vm: CleanerViewModel
+    let location: ScanLocation
+    let items: [OrphanItem]
+    let maxSize: Int64
+    @State private var expanded = false
+    
+    private var allSel: Bool { items.allSatisfy { vm.selectedItems.contains($0.id) } }
+    private var secSize: Int64 { items.reduce(0) { $0 + $1.size } }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // ── 分组标题 ├─
+            Button(action: { withAnimation(.spring(duration: 0.3)) { expanded.toggle() } }) {
+                HStack(spacing: 10) {
+                    // 全选复选框（与子项对齐）
+                    Button(action: { vm.toggleAll(for: location) }) {
+                        Image(systemName: allSel ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(allSel ? Cln.accent : Cln.border)
+                            .font(.system(size: 13))
+                    }
+                    .buttonStyle(.plain)
+                    .help(allSel ? "取消全选" : "全选本组")
+                    
+                    // 折叠箭头
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(Cln.text3)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .animation(.spring(duration: 0.3), value: expanded)
+                    
+                    // 位置图标
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Cln.accentLight)
+                            .frame(width: 24, height: 24)
+                        Image(systemName: location.icon)
+                            .font(.system(size: 10))
+                            .foregroundColor(Cln.accent)
+                    }
+                    
+                    // 位置名称
+                    Text(location.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(Cln.text)
+                        .help(location == .emptyDirs
+                              ? location.riskDescription
+                              : "~/Library/\(location.rawValue) — \(location.riskDescription)")
+                    
+                    Spacer()
+                    
+                    // 统计
+                    HStack(spacing: 8) {
+                        Text("\(items.count) 项")
+                            .font(.custom(Cln.mono, size: 10))
+                            .foregroundColor(Cln.text3)
+                        Text(ByteCountFormatter.string(fromByteCount: secSize, countStyle: .file))
+                            .font(.custom(Cln.mono, size: 10))
+                            .foregroundColor(Cln.accent)
+                            .monospacedDigit()
+                    }
+                }
+                .padding(.vertical, 9)
+                .padding(.horizontal, 14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            
+            // ── 子项列表 ──
+            if expanded {
+                VStack(spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { i, item in
+                        TreeItemRow(item: item, maxSize: maxSize)
+                            .environmentObject(vm)
+                        if i < items.count - 1 {
+                            Divider()
+                                .overlay(Cln.borderLight)
+                                .padding(.leading, 48)
+                        }
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+        }
+        .background(Cln.surface)
+        .cornerRadius(10)
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Cln.borderLight, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.03), radius: 4, y: 2)
+    }
+}
+
+// MARK: - 树形条目行
+struct TreeItemRow: View {
+    @EnvironmentObject var vm: CleanerViewModel
+    let item: OrphanItem
+    let maxSize: Int64
+    @State private var hovered = false
+    @State private var lastTapTime = Date.distantPast
+    
+    private var sel: Bool { vm.selectedItems.contains(item.id) }
+    private var barRatio: CGFloat {
+        guard maxSize > 0 else { return 0 }
+        return max(0.04, CGFloat(item.size) / CGFloat(maxSize) * 0.85)
+    }
+    // 统一单位格式化：>= 1MB 显示 MB，>= 1KB 显示 KB，否则显示 B
+    private var formattedSize: String {
+        if item.size >= 1_048_576 {
+            return String(format: "%.1f MB", Double(item.size) / 1_048_576)
+        } else if item.size >= 1024 {
+            return String(format: "%.1f KB", Double(item.size) / 1024)
+        } else {
+            return "\(item.size) B"
+        }
+    }
     
     var body: some View {
         HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(color.opacity(0.1))
-                    .frame(width: 28, height: 28)
-                Image(systemName: icon)
-                    .font(.caption)
-                    .foregroundColor(color)
+            // 左缩进占位
+            Color.clear.frame(width: 4)
+            
+            // 勾选（独立按钮：仅切换选中状态）
+            Button(action: { toggle() }) {
+                Image(systemName: sel ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(sel ? Cln.accent : Cln.border)
+                    .font(.system(size: 13))
             }
-            VStack(alignment: .leading, spacing: 0) {
-                Text(label)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Text(value)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+            .buttonStyle(.plain)
+            .help(sel ? "取消选中" : "选中此项")
+            
+            // 可点击的内容区（单击复制路径，双击打开文件夹）
+            HStack(spacing: 10) {
+                // 类型标记
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Cln.bg)
+                        .frame(width: 18, height: 18)
+                    Image(systemName: item.size == 0 ? "doc.text" : "doc")
+                        .font(.system(size: 8))
+                        .foregroundColor(Cln.text3)
+                }
+                
+                // 名称（带 tooltip）
+                Text(item.name)
+                    .font(.system(size: 12))
+                    .foregroundColor(Cln.text)
+                    .lineLimit(1)
+                    .help(item.path)  // 悬停显示完整路径
+                
+                Spacer()
+                
+                // 空目录标记
+                if item.size == 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 8))
+                            .foregroundColor(Cln.text3)
+                        Text("空目录")
+                            .font(.system(size: 9))
+                            .foregroundColor(Cln.text3)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Cln.surfaceSub)
+                    .cornerRadius(3)
+                    .overlay(RoundedRectangle(cornerRadius: 3).stroke(Cln.borderLight, lineWidth: 1))
+                }
+                
+                // 进度条
+                if maxSize > 0 && item.size > 0 {
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Cln.bg)
+                            .frame(width: 48, height: 4)
+                        Capsule()
+                            .fill(item.size > Int64(Double(maxSize) * 0.3) ? Cln.amber : Cln.accent)
+                            .frame(width: max(4, 48 * barRatio), height: 4)
+                            .opacity(0.85)
+                    }
+                }
+                
+                // 大小
+                Text(item.size == 0 ? "—" : formattedSize)
+                    .font(.custom(Cln.mono, size: 11))
+                    .foregroundColor(item.size == 0 ? Cln.text3 : Cln.text2)
+                    .frame(width: 72, alignment: .trailing)
                     .monospacedDigit()
-                    .foregroundColor(.primary)
             }
-            Spacer()
+            .contentShape(Rectangle())
+            .onTapGesture { handleTap() }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 14)
+        .background(hovered ? Cln.surfaceSub : Color.clear)
+        .cornerRadius(6)
+        .onHover { hovered = $0 }
+    }
+    
+    /// 处理单击/双击：单击复制路径，双击打开文件夹
+    private func handleTap() {
+        let now = Date()
+        if now.timeIntervalSince(lastTapTime) < 0.3 {
+            // 双击 → 打开文件夹
+            lastTapTime = .distantPast
+            openInFinder()
+        } else {
+            // 单击 → 延迟判断是否变为双击
+            lastTapTime = now
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in
+                guard lastTapTime == now else { return }
+                copyPathToClipboard()
+            }
+        }
+    }
+    
+    /// 复制完整路径到剪贴板
+    private func copyPathToClipboard() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(item.path, forType: .string)
+        // 简单的反馈：状态栏闪烁感（通过 hover 颜色闪一下）
+        hovered = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            hovered = false
+        }
+    }
+    
+    /// 在 Finder 中打开所在文件夹并选中文件
+    private func openInFinder() {
+        let parent = (item.path as NSString).deletingLastPathComponent
+        NSWorkspace.shared.selectFile(item.path, inFileViewerRootedAtPath: parent)
+    }
+    
+    private func toggle() {
+        withAnimation(.easeOut(duration: 0.12)) {
+            if sel { vm.selectedItems.remove(item.id) }
+            else { vm.selectedItems.insert(item.id) }
         }
     }
 }

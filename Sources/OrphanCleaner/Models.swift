@@ -35,14 +35,43 @@ enum ScanLocation: String, CaseIterable, Identifiable {
     case preferences = "Preferences"
     case webKit = "WebKit"
     case savedState = "Saved Application State"
+    /// 虚拟分类：存放各位置扫描出的空目录
+    case emptyDirs = ""
     
-    var id: String { rawValue }
+    /// 实际扫描的路径（不含虚拟分类）
+    static let scanLocations: [ScanLocation] = [
+        .applicationSupport, .caches, .logs, .preferences, .webKit, .savedState
+    ]
+    
+    var id: String {
+        switch self {
+        case .emptyDirs: return "__empty_dirs__"
+        default: return rawValue
+        }
+    }
+    
+    /// 中文显示名
+    var displayName: String {
+        switch self {
+        case .applicationSupport: return "应用支持"
+        case .caches: return "缓存"
+        case .logs: return "日志"
+        case .preferences: return "偏好设置"
+        case .webKit: return "网页缓存"
+        case .savedState: return "窗口状态"
+        case .emptyDirs: return "空目录"
+        }
+    }
     
     var path: String {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library")
-            .appendingPathComponent(rawValue)
-            .path
+        switch self {
+        case .emptyDirs: return ""
+        default:
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library")
+                .appendingPathComponent(rawValue)
+                .path
+        }
     }
     
     var icon: String {
@@ -53,6 +82,7 @@ enum ScanLocation: String, CaseIterable, Identifiable {
         case .preferences: return "gearshape"
         case .webKit: return "globe"
         case .savedState: return "clock"
+        case .emptyDirs: return "folder"
         }
     }
     
@@ -65,6 +95,7 @@ enum ScanLocation: String, CaseIterable, Identifiable {
         case .preferences: return "偏好设置，删除后应用会恢复默认设置"
         case .webKit: return "网页缓存，删除后浏览器会重新加载"
         case .savedState: return "窗口状态，删除不影响使用"
+        case .emptyDirs: return "完全空置的目录，删除没有影响"
         }
     }
 }
@@ -147,7 +178,7 @@ let systemDirNames: Set<String> = [
     "openscreen", "homeenergyd", "icdd", "rtk", "gk", "iii", "spotlight",
     "mobilemeaccounts", "byhost",
     "discrecording", "photosupgrade", "appanalytics", "coresimulator",
-    "diagnosticreports", "passkit", "familycircled", "gamekit",
+    "diagnosticreports", "passkit", "familycircle", "familycircled", "gamekit",
     "jetpackcache", "mbuseragent", "cloudkit", "com.electron.ollama",
     "appstore", "assistivetouchd", "audiocomponent", "authkit",
     "backgroundtaskmanagement", "bluetooth", "classkit",

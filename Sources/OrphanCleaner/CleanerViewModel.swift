@@ -8,7 +8,7 @@ class CleanerViewModel: ObservableObject {
     @Published var orphans: [ScanLocation: [OrphanItem]] = [:]
     @Published var selectedItems: Set<UUID> = []
     @Published var expandedLocations: Set<ScanLocation> = Set(ScanLocation.allCases)
-    @Published var showEmptyDirs: Bool = false
+    @Published var showEmptyDirs: Bool = true
     
     private var installedIndex: InstalledAppIndex = InstalledAppIndex()
     
