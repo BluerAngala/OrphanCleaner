@@ -54,11 +54,12 @@ class CleanerViewModel: ObservableObject {
             let installed = InstalledAppCollector.collect()
             self.installedIndex = installed
             
-            // 扫描残留
-            DispatchQueue.main.async {
-                self.scanState = .scanning(progress: "正在比对 Library 目录...")
+            // 扫描残留（各位置依次报告进度）
+            let results = OrphanScanner.scan(installed: installed, includeEmptyDirs: self.showEmptyDirs) { [weak self] msg in
+                DispatchQueue.main.async {
+                    self?.scanState = .scanning(progress: msg)
+                }
             }
-            let results = OrphanScanner.scan(installed: installed, includeEmptyDirs: self.showEmptyDirs)
             
             DispatchQueue.main.async {
                 self.orphans = results

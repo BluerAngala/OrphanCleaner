@@ -251,7 +251,6 @@ extension String {
     }
 }
 
-// MARK: - Process 扩展
 extension Process {
     static func run(_ path: String, arguments: [String]) throws -> String {
         let pipe = Pipe()
@@ -260,21 +259,35 @@ extension Process {
         proc.arguments = arguments
         proc.standardOutput = pipe
         proc.standardError = pipe
+
+        // Read pipe data on a background thread while process runs,
+        // preventing pipe-buffer deadlock when output exceeds 64KB.
+        let group = DispatchGroup()
+        var outputData = Data()
+        group.enter()
+        DispatchQueue.global().async {
+            outputData = pipe.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
         try proc.run()
         proc.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
+        group.wait()
+
+        return String(data: outputData, encoding: .utf8) ?? ""
     }
 }
 
 // MARK: - 孤儿扫描器
 struct OrphanScanner {
 
-    static func scan(installed: InstalledAppIndex, includeEmptyDirs: Bool = false) -> [ScanLocation: [OrphanItem]] {
+    static func scan(installed: InstalledAppIndex, includeEmptyDirs: Bool = false, progress: ((String) -> Void)? = nil) -> [ScanLocation: [OrphanItem]] {
         var results: [ScanLocation: [OrphanItem]] = [:]
         var emptyItems: [OrphanItem] = []
 
         for location in ScanLocation.scanLocations {
+            let locName = location.displayName
+            progress?("正在扫描 \(locName)...")
             let items = scanLocation(location, installed: installed, includeEmptyDirs: includeEmptyDirs)
             if includeEmptyDirs {
                 // 把空目录抽到虚拟分类
