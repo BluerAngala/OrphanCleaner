@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -89,7 +90,7 @@ jobs:
             --apple-id "$APPLE_ID" \
             --team-id "$APPLE_TEAM_ID" \
             --password "$NOTARIZATION_PASSWORD" \
-            --wait --timeout 5m
+            --wait --timeout 15m
           
           echo "📎 装订公证票据..."
           xcrun stapler staple "$APP_PATH"
