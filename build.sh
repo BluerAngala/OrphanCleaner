@@ -13,9 +13,10 @@ OUTPUT_DIR="Build"
 
 echo "🔨 开始构建..."
 
+cd "$(dirname "$0")"
+
 # 1. 编译
 echo "📦 编译中..."
-cd "$(dirname "$0")"
 swift build -c release --product OrphanCleaner
 
 # 2. 创建 .app 包结构
@@ -28,7 +29,6 @@ mkdir -p "$APP_PATH/Contents/Resources"
 # 3. 复制二进制
 BINARY="$BUILD_DIR/release/OrphanCleaner"
 if [ ! -f "$BINARY" ]; then
-    # 尝试其他可能的路径
     BINARY="$BUILD_DIR/arm64-apple-macosx/release/OrphanCleaner"
 fi
 
@@ -51,13 +51,8 @@ fi
 # 6. 创建 PkgInfo
 echo "APPL????" > "$APP_PATH/Contents/PkgInfo"
 
-# 7. 签名（本地运行）
-echo "✍️  签名..."
-codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || echo "   ⚠️  签名警告（不影响本地使用）"
-
 echo ""
 echo "✅ 构建完成！"
 echo "   位置: $(pwd)/$APP_PATH"
 echo ""
-echo "   打开方式: open \"$APP_PATH\""
-echo "   或拖到 Applications 文件夹使用"
+echo "   下一步: ./sign.sh（打包签名分发）"

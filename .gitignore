@@ -23,4 +23,5 @@ xcuserdata/
 
 # Packaged app
 *.app
+*.dmg
 app.zip
