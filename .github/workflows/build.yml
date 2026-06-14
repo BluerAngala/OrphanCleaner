@@ -143,5 +143,6 @@ macOS 原生 App，已签名公证，双击即可使用。
 
 ### 签名
 ✅ Developer ID 签名（Heng Chen）
-✅ Apple 公证验证通过"        env:
+✅ Apple 公证验证通过"
+        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
