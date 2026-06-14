@@ -28,8 +28,12 @@ jobs:
           mkdir -p "$APP_PATH/Contents/MacOS"
           mkdir -p "$APP_PATH/Contents/Resources"
 
-          BINARY=$(find "$BUILD_DIR" -name "OrphanCleaner" -type f -perm /111 | head -1)
-          if [ -z "$BINARY" ]; then
+          # 查找编译产物（swift build -c release 输出到 .build/arm64-apple-macosx/release/）
+          BINARY=".build/arm64-apple-macosx/release/OrphanCleaner"
+          if [ ! -f "$BINARY" ]; then
+            BINARY=".build/release/OrphanCleaner"
+          fi
+          if [ ! -f "$BINARY" ]; then
             echo "❌ 找不到编译产物！"
             find "$BUILD_DIR" -name "*OrphanCleaner*" -type f
             exit 1
