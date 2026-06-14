@@ -2,7 +2,13 @@
 
 macOS 原生 App，检测并清理已卸载软件留下的缓存和配置残留。
 
-![macOS 13.0+](https://img.shields.io/badge/macOS-13.0+-blue) ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-orange)
+![macOS 13.0+](https://img.shields.io/badge/macOS-13.0+-blue) ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-orange) [![Build](https://github.com/BluerAngala/OrphanCleaner/actions/workflows/build.yml/badge.svg)](https://github.com/BluerAngala/OrphanCleaner/actions/workflows/build.yml)
+
+## 📥 下载
+
+从 [Releases](https://github.com/BluerAngala/OrphanCleaner/releases) 页面下载最新版 `残留清理助手.dmg`。
+
+> ⚠️ 首次打开：**右键点击 → 打开**（未签名应用需绕过 Gatekeeper）
 
 ## 功能
 

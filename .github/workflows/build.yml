@@ -1,0 +1,109 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建 Release
+        run: |
+          swift build -c release
+
+      - name: 创建 .app 包
+        run: |
+          APP_NAME="残留清理助手"
+          OUTPUT_DIR="Build"
+          APP_PATH="$OUTPUT_DIR/$APP_NAME.app"
+          BUILD_DIR=".build"
+
+          mkdir -p "$APP_PATH/Contents/MacOS"
+          mkdir -p "$APP_PATH/Contents/Resources"
+
+          # 查找编译产物
+          BINARY=$(find "$BUILD_DIR" -name "OrphanCleaner" -type f -perm +111 | head -1)
+          if [ -z "$BINARY" ]; then
+            echo "❌ 找不到编译产物！"
+            find "$BUILD_DIR" -name "*OrphanCleaner*" -type f
+            exit 1
+          fi
+          echo "📦 二进制: $BINARY"
+
+          cp "$BINARY" "$APP_PATH/Contents/MacOS/OrphanCleaner"
+          cp Sources/OrphanCleaner/Resources/Info.plist "$APP_PATH/Contents/"
+          echo "APPL????" > "$APP_PATH/Contents/PkgInfo"
+
+          # 复制资源
+          if [ -d "Sources/OrphanCleaner/Resources" ]; then
+            cp -r Sources/OrphanCleaner/Resources/* "$APP_PATH/Contents/Resources/" 2>/dev/null || true
+          fi
+
+          # Ad-hoc 签名
+          codesign --force --deep --sign - "$APP_PATH" 2>/dev/null || true
+          echo "✅ .app 创建完成: $APP_PATH"
+
+      - name: 创建 DMG
+        run: |
+          APP_NAME="残留清理助手"
+          DMG_NAME="${APP_NAME}.dmg"
+          WORK_DIR="dmg_staging"
+
+          mkdir -p "$WORK_DIR"
+          cp -r "Build/$APP_NAME.app" "$WORK_DIR/"
+
+          # 创建 Applications 快捷方式
+          ln -s /Applications "$WORK_DIR/Applications"
+
+          # 创建 DMG
+          hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder "$WORK_DIR" \
+            -ov -format UDZO \
+            "$DMG_NAME"
+
+          echo "✅ DMG 创建完成: $DMG_NAME"
+          echo "DMG_NAME=$DMG_NAME" >> $GITHUB_ENV
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 残留清理助手
+          path: 残留清理助手.dmg
+          retention-days: 30
+
+      - name: 创建 Release（仅 tag 推送）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: 残留清理助手.dmg
+          body: |
+            ## 残留清理助手
+
+            macOS 原生 App，检测并清理已卸载软件留下的所有残留。
+
+            ### 使用方法
+
+            1. 下载 `残留清理助手.dmg`
+            2. 双击打开，将「残留清理助手」拖入 `Applications`
+            3. 首次打开：**右键点击 → 打开**（未签名应用需绕过 Gatekeeper）
+
+            ### 扫描范围
+
+            - 📁 文件残留：~/Library 下 6 个目录
+            - 🚀 启动项残留：LaunchAgents/LaunchDaemons plist
+            - 🔐 登录项残留：BTM 数据库幽灵条目
+            - 🧩 扩展残留：Finder 同步扩展注册残余
+            - 💾 服务缓存：launchctl disabled.plist 残留
+
+            ### 安全
+
+            五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
