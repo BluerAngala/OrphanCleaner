@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       APP_NAME: "仿win自动清理工具"
 
@@ -70,6 +70,36 @@ jobs:
           codesign -dvvv "Build/$APP_NAME.app" 2>&1 | grep -E "Authority|TeamIdentifier"
           echo "✅ 签名验证通过"
 
+      - name: 公证
+        if: env.CERT_P12 != ''
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
+        run: |
+          APP_PATH="Build/$APP_NAME.app"
+          ditto -c -k --keepParent "$APP_PATH" /tmp/app.zip
+
+          echo "📋 提交公证，等待 Apple 验证..."
+          xcrun notarytool submit /tmp/app.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --wait --timeout 20m \
+            --output-format json > /tmp/nr.json
+
+          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/nr.json')).get('status','unknown'))" 2>/dev/null)
+          echo "📋 公证状态: $STATUS"
+
+          if [ "$STATUS" != "Accepted" ]; then
+            cat /tmp/nr.json
+            exit 1
+          fi
+
+          xcrun stapler staple "$APP_PATH"
+          echo "✅ 公证完成，票据已装订"
+
       - name: 创建 DMG
         run: |
           DMG_NAME="OrphanCleaner.dmg"
@@ -92,6 +122,26 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: "OrphanCleaner.dmg"
-          body: "## 仿win自动清理工具 ${{ github.ref_name }}\n\nmacOS 原生 App。\n\n### 使用方法\n1. 下载 DMG，双击打开\n2. 将「仿win自动清理工具」拖入 Applications\n3. 打开即可使用\n\n### 扫描范围\n- 文件残留：~/Library 下 6 个目录\n- 启动项残留：LaunchAgents/LaunchDaemons\n- 登录项残留：BTM 数据库幽灵条目\n- 扩展残留：Finder 同步扩展注册残余\n- 服务缓存：launchctl disabled.plist 残留\n\n### 安全\n五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）"
-        env:
+          body: "## 仿win自动清理工具 ${{ github.ref_name }}
+
+macOS 原生 App，已签名公证，双击即可使用。
+
+### 使用方法
+1. 下载 DMG，双击打开
+2. 将「仿win自动清理工具」拖入 Applications
+3. 双击打开，无安全警告
+
+### 扫描范围
+- 文件残留：~/Library 下 6 个目录
+- 启动项残留：LaunchAgents/LaunchDaemons
+- 登录项残留：BTM 数据库幽灵条目
+- 扩展残留：Finder 同步扩展注册残余
+- 服务缓存：launchctl disabled.plist 残留
+
+### 安全
+五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）
+
+### 签名
+✅ Developer ID 签名（Heng Chen）
+✅ Apple 公证验证通过"        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
