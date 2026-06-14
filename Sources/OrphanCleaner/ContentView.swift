@@ -91,7 +91,7 @@ struct ContentView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(Cln.accent)
                 }
-                Text("残留清理助手")
+                Text("仿win自动清理工具")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(Cln.text)
             }

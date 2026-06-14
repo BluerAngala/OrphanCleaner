@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# 残留清理助手 - 签名 & 打包脚本
+# 仿win自动清理工具 - 签名 & 打包脚本
 #
 # 用法:
 #   ./sign.sh              # 签名 + 打包 DMG（不发公证）
@@ -9,7 +9,7 @@
 
 set -e
 
-APP_NAME="残留清理助手"
+APP_NAME="仿win自动清理工具"
 APP_PATH="Build/$APP_NAME.app"
 DMG_NAME="${APP_NAME}.dmg"
 DEV_TEAM="SXC84F45PT"

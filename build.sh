@@ -1,12 +1,12 @@
 #!/bin/bash
 # ============================================================
-# 残留清理助手 - 构建脚本
+# 仿win自动清理工具 - 构建脚本
 # 用法: ./build.sh
 # ============================================================
 
 set -e
 
-APP_NAME="残留清理助手"
+APP_NAME="仿win自动清理工具"
 BUNDLE_ID="com.orphancleaner.app"
 BUILD_DIR=".build"
 OUTPUT_DIR="Build"

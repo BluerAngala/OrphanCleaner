@@ -7,9 +7,9 @@
     <key>CFBundleIdentifier</key>
     <string>com.orphancleaner.app</string>
     <key>CFBundleName</key>
-    <string>残留清理助手</string>
+    <string>仿win自动清理工具</string>
     <key>CFBundleDisplayName</key>
-    <string>残留清理助手</string>
+    <string>仿win自动清理工具</string>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
     <key>CFBundleShortVersionString</key>
