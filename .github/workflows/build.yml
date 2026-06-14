@@ -28,7 +28,7 @@ jobs:
           mkdir -p "$APP_PATH/Contents/MacOS"
           mkdir -p "$APP_PATH/Contents/Resources"
 
-          BINARY=$(find "$BUILD_DIR" -name "OrphanCleaner" -type f -perm +111 | head -1)
+          BINARY=$(find "$BUILD_DIR" -name "OrphanCleaner" -type f -perm /111 | head -1)
           if [ -z "$BINARY" ]; then
             echo "❌ 找不到编译产物！"
             find "$BUILD_DIR" -name "*OrphanCleaner*" -type f
