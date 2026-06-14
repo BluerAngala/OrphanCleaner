@@ -13,27 +13,23 @@ jobs:
   build:
     runs-on: macos-latest
     timeout-minutes: 30
-
     env:
       APP_NAME: "残留清理助手"
 
     steps:
       - uses: actions/checkout@v4
 
-      # ── 编译 ──
       - name: 编译
         run: swift build -c release
 
-      # ── 创建 .app 包 ──
       - name: 创建 .app 包
         run: |
           APP_PATH="Build/$APP_NAME.app"
-          mkdir -p "$APP_PATH/Contents/MacOS"
-          mkdir -p "$APP_PATH/Contents/Resources"
+          mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
 
           BINARY=".build/arm64-apple-macosx/release/OrphanCleaner"
           [ ! -f "$BINARY" ] && BINARY=".build/release/OrphanCleaner"
-          [ ! -f "$BINARY" ] && { echo "❌ 找不到编译产物"; find .build -name "OrphanCleaner" -type f; exit 1; }
+          [ ! -f "$BINARY" ] && { echo "❌ 找不到编译产物"; exit 1; }
 
           cp "$BINARY" "$APP_PATH/Contents/MacOS/OrphanCleaner"
           cp Sources/OrphanCleaner/Resources/Info.plist "$APP_PATH/Contents/"
@@ -43,9 +39,8 @@ jobs:
             cp -r Sources/OrphanCleaner/Resources/* "$APP_PATH/Contents/Resources/" 2>/dev/null || true
           fi
 
-      # ── 签名 ──
       - name: Developer ID 签名
-        if: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+        if: env.CERT_P12 != ''
         env:
           CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
@@ -56,47 +51,34 @@ jobs:
           security create-keychain -p temp build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p temp build.keychain
-
-          security import /tmp/cert.p12 \
-            -k build.keychain \
-            -P "$CERT_PASSWORD" \
-            -T /usr/bin/codesign -A
-
-          security set-key-partition-list \
-            -S apple-tool:,apple: -s -k temp build.keychain
-
+          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
           rm -f /tmp/cert.p12
 
-          DEVELOPER_ID=$(security find-identity -v -p basic | \
-            grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+          HASH=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+          if [ -z "$HASH" ]; then echo "❌ 证书导入失败"; exit 1; fi
 
-          if [ -z "$DEVELOPER_ID" ]; then
-            echo "❌ 未找到 Developer ID 身份"
-            security find-identity -v
-            exit 1
-          fi
-
-          codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
+          codesign --force --deep --options runtime --sign "$HASH" "$APP_PATH"
           security default-keychain -s login.keychain
           echo "✅ 签名完成"
 
-      # ── 验证签名 ──
       - name: 验证签名
-        if: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+        if: env.CERT_P12 != ''
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
         run: |
           codesign -dvvv "Build/$APP_NAME.app" 2>&1 | grep -E "Authority|TeamIdentifier|Sealed"
           echo "✅ 签名验证通过"
 
-      # ── 公证 ──
       - name: 公证
-        if: ${{ secrets.DEVELOPER_ID_P12 != '' && secrets.APPLE_ID != '' }}
+        if: env.CERT_P12 != '' && env.APPLE_ID != ''
         env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
         run: |
-          APP_PATH="Build/$APP_NAME.app"
-          ditto -c -k --keepParent "$APP_PATH" /tmp/app.zip
+          ditto -c -k --keepParent "Build/$APP_NAME.app" /tmp/app.zip
 
           echo "📋 提交公证..."
           xcrun notarytool submit /tmp/app.zip \
@@ -104,70 +86,37 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --password "$NOTARIZATION_PASSWORD" \
             --wait --timeout 25m \
-            --output-format json > /tmp/notary_result.json
+            --output-format json > /tmp/nr.json
 
-          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/notary_result.json')).get('status','unknown'))" 2>/dev/null)
+          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/nr.json')).get('status','unknown'))" 2>/dev/null)
           echo "📋 状态: $STATUS"
+          if [ "$STATUS" != "Accepted" ]; then cat /tmp/nr.json; exit 1; fi
 
-          if [ "$STATUS" != "Accepted" ]; then
-            cat /tmp/notary_result.json
-            exit 1
-          fi
-
-          xcrun stapler staple "$APP_PATH"
+          xcrun stapler staple "Build/$APP_NAME.app"
           echo "✅ 公证完成"
 
-      # ── 创建 DMG ──
       - name: 创建 DMG
         run: |
-          APP_PATH="Build/$APP_NAME.app"
           DMG_NAME="${APP_NAME}.dmg"
-
           mkdir -p dmg_staging
-          cp -r "$APP_PATH" dmg_staging/
+          cp -r "Build/$APP_NAME.app" dmg_staging/
           ln -s /Applications dmg_staging/Applications
-
-          hdiutil create \
-            -volname "$APP_NAME" \
-            -srcfolder dmg_staging \
-            -ov -format UDZO \
-            "$DMG_NAME" 2>/dev/null
-
+          hdiutil create -volname "$APP_NAME" -srcfolder dmg_staging -ov -format UDZO "$DMG_NAME" 2>/dev/null
           rm -rf dmg_staging
           echo "DMG_FILE=$DMG_NAME" >> $GITHUB_ENV
 
-      # ── 上传 Artifact ──
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}
+          name: 残留清理助手
           path: "*.dmg"
           retention-days: 30
 
-      # ── 创建 Release ──
       - name: 创建 Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: "*.dmg"
-          body: |
-            ## 残留清理助手 v${{ github.ref_name }}
-
-            macOS 原生 App，检测并清理已卸载软件的所有残留。
-
-            ### 使用方法
-            1. 下载 DMG，双击打开
-            2. 将「残留清理助手」拖入 Applications
-            3. 打开即可使用
-
-            ### 扫描范围
-            - 📁 文件残留：~/Library 下 6 个目录
-            - 🚀 启动项残留：LaunchAgents/LaunchDaemons
-            - 🔐 登录项残留：BTM 数据库幽灵条目
-            - 🧩 扩展残留：Finder 同步扩展注册残余
-            - 💾 服务缓存：launchctl disabled.plist 残留
-
-            ### 安全
-            五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）
+          body: "## 残留清理助手 ${{ github.ref_name }}\n\nmacOS 原生 App，检测并清理已卸载软件留下的所有残留。\n\n### 使用方法\n1. 下载 DMG，双击打开\n2. 将「残留清理助手」拖入 Applications\n3. 打开即可使用\n\n### 扫描范围\n- 文件残留：~/Library 下 6 个目录\n- 启动项残留：LaunchAgents/LaunchDaemons\n- 登录项残留：BTM 数据库幽灵条目\n- 扩展残留：Finder 同步扩展注册残余\n- 服务缓存：launchctl disabled.plist 残留\n\n### 安全\n五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
