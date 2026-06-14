@@ -13,10 +13,13 @@ DerivedData/
 *.xcworkspace
 xcuserdata/
 
-
-# Packaged app bundle
-*.app*.p12
+# Certificates & keys
+*.p12
 *.key
 *.csr
+*.cer
 *_base64*
 *.p8
+
+# Packaged app
+*.app
