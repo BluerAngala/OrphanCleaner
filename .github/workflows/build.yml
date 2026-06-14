@@ -53,29 +53,30 @@ jobs:
       - name: 签名（如有证书）
         if: env.HAS_CERT == 'true'
         env:
-          DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
-          DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
-          HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
+          DEV_CERT: ${{ secrets.DEV_CERT }}
+          DEV_KEY: ${{ secrets.DEV_KEY }}
+          HAS_CERT: ${{ secrets.DEV_CERT != '' }}
         run: |
           APP_PATH="Build/残留清理助手.app"
           
-          echo "$DEVELOPER_ID_P12" | base64 -d > cert.p12
+          echo "$DEV_CERT" | base64 -d > cert.pem
+          echo "$DEV_KEY" | base64 -d > key.pem
           
-          # 尝试导入 keychain
+          # 合并为 identity 并导入
+          cat key.pem cert.pem > identity.pem
           security create-keychain -p temp build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p temp build.keychain
+          security import identity.pem -k build.keychain -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
           
-          if security import cert.p12 -k build.keychain -P "$DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign -A 2>/dev/null; then
-            security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
-            DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
-            if [ -n "$DEVELOPER_ID" ]; then
-              echo "✍️  签名中..."
-              codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
-              echo "✅ 已签名"
-            fi
+          DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+          if [ -n "$DEVELOPER_ID" ]; then
+            echo "✍️  签名中..."
+            codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
+            echo "✅ 已签名（右键打开警告已消除）"
           else
-            echo "⚠️ 签名跳过（p12 导入失败），DMG 为未签名版本"
+            echo "⚠️ 签名跳过"
           fi
 
       - name: Ad-hoc 签名（无证书时）
