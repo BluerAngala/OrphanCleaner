@@ -50,62 +50,33 @@ jobs:
 
           echo "✅ .app 创建完成: $APP_PATH"
 
-      - name: 签名 & 公证（如有证书）
+      - name: 签名（如有证书）
         if: env.HAS_CERT == 'true'
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
           HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
         run: |
-          APP_NAME="残留清理助手"
-          APP_PATH="Build/$APP_NAME.app"
-
-          # 从 p12 提取证书和私钥（绕过 keychain）
+          APP_PATH="Build/残留清理助手.app"
+          
           echo "$DEVELOPER_ID_P12" | base64 -d > cert.p12
-          openssl pkcs12 -in cert.p12 -nocerts -nodes -passin pass:"$DEVELOPER_ID_PASSWORD" -out key.pem 2>/dev/null
-          openssl pkcs12 -in cert.p12 -clcerts -nokeys -passin pass:"$DEVELOPER_ID_PASSWORD" -out cert.pem 2>/dev/null
-
-          # 合并为 identity（证书+私钥）
-          cat key.pem cert.pem > identity.pem
-
-          # 导入 keychain（用 security import identity 方式）
+          
+          # 尝试导入 keychain
           security create-keychain -p temp build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p temp build.keychain
-          security import cert.p12 -k build.keychain -P "$DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign -A 2>/dev/null || {
-            # 如果 p12 导入失败，尝试用 openssl 提取的 pem
-            security import identity.pem -k build.keychain -P "" -T /usr/bin/codesign -A
-          }
-          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain 2>/dev/null || true
-
-          # 签名
-          echo "✍️  Developer ID 签名..."
-          DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
-          if [ -z "$DEVELOPER_ID" ]; then
-            echo "❌ 找不到签名身份"
-            security find-identity -v -p basic
-            exit 1
+          
+          if security import cert.p12 -k build.keychain -P "$DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign -A 2>/dev/null; then
+            security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
+            DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+            if [ -n "$DEVELOPER_ID" ]; then
+              echo "✍️  签名中..."
+              codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
+              echo "✅ 已签名"
+            fi
+          else
+            echo "⚠️ 签名跳过（p12 导入失败），DMG 为未签名版本"
           fi
-          codesign --force --deep --options runtime \
-            --sign "$DEVELOPER_ID" \
-            "$APP_PATH"
-
-          # 公证（Apple ID + 专用密码模式，无需 App Store Connect）
-          echo "📋 提交公证（需等待 1-3 分钟）..."
-          ditto -c -k --keepParent "$APP_PATH" app.zip
-          xcrun notarytool submit app.zip \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$NOTARIZATION_PASSWORD" \
-            --wait
-
-          # 装订公证票据
-          echo "📎 装订公证票据..."
-          xcrun stapler staple "$APP_PATH"
-          echo "✅ 签名公证完成"
 
       - name: Ad-hoc 签名（无证书时）
         if: env.HAS_CERT != 'true'
