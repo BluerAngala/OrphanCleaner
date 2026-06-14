@@ -16,8 +16,6 @@ jobs:
 
     env:
       APP_NAME: "残留清理助手"
-      BUNDLE_ID: "com.orphancleaner.app"
-      HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -45,18 +43,14 @@ jobs:
             cp -r Sources/OrphanCleaner/Resources/* "$APP_PATH/Contents/Resources/" 2>/dev/null || true
           fi
 
-          echo "✅ App 包创建完成"
-
-      # ── 签名（p12 证书）──
+      # ── 签名 ──
       - name: Developer ID 签名
-        if: env.HAS_CERT == 'true'
+        if: ${{ secrets.DEVELOPER_ID_P12 != '' }}
         env:
           CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
         run: |
           APP_PATH="Build/$APP_NAME.app"
-
-          # 解码 p12 并导入临时钥匙串
           echo "$CERT_P12" | base64 -d > /tmp/cert.p12
 
           security create-keychain -p temp build.keychain
@@ -66,50 +60,42 @@ jobs:
           security import /tmp/cert.p12 \
             -k build.keychain \
             -P "$CERT_PASSWORD" \
-            -T /usr/bin/codesign \
-            -A
+            -T /usr/bin/codesign -A
 
           security set-key-partition-list \
-            -S apple-tool:,apple: \
-            -s -k temp build.keychain
+            -S apple-tool:,apple: -s -k temp build.keychain
 
           rm -f /tmp/cert.p12
 
-          # 查找 Developer ID 证书
           DEVELOPER_ID=$(security find-identity -v -p basic | \
             grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
 
           if [ -z "$DEVELOPER_ID" ]; then
-            echo "❌ 证书导入后未找到 Developer ID 身份"
+            echo "❌ 未找到 Developer ID 身份"
             security find-identity -v
             exit 1
           fi
 
-          echo "🔑 $(security find-identity -v | grep "$DEVELOPER_ID" | sed 's/.*"//' | sed 's/".*//')"
           codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
-
-          # 恢复默认钥匙串
           security default-keychain -s login.keychain
-
           echo "✅ 签名完成"
 
       # ── 验证签名 ──
       - name: 验证签名
-        if: env.HAS_CERT == 'true'
+        if: ${{ secrets.DEVELOPER_ID_P12 != '' }}
         run: |
           codesign -dvvv "Build/$APP_NAME.app" 2>&1 | grep -E "Authority|TeamIdentifier|Sealed"
           echo "✅ 签名验证通过"
 
-      # ── 公证（有 APPLE_ID 时）──
+      # ── 公证 ──
       - name: 公证
-        if: env.HAS_CERT == 'true' && secrets.APPLE_ID != ''
+        if: ${{ secrets.DEVELOPER_ID_P12 != '' && secrets.APPLE_ID != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
         run: |
           APP_PATH="Build/$APP_NAME.app"
-
           ditto -c -k --keepParent "$APP_PATH" /tmp/app.zip
 
           echo "📋 提交公证..."
@@ -120,11 +106,10 @@ jobs:
             --wait --timeout 25m \
             --output-format json > /tmp/notary_result.json
 
-          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/notary_result.json')).get('status','unknown'))")
+          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/notary_result.json')).get('status','unknown'))" 2>/dev/null)
           echo "📋 状态: $STATUS"
 
           if [ "$STATUS" != "Accepted" ]; then
-            echo "❌ 公证失败："
             cat /tmp/notary_result.json
             exit 1
           fi
@@ -149,8 +134,6 @@ jobs:
             "$DMG_NAME" 2>/dev/null
 
           rm -rf dmg_staging
-
-          echo "✅ DMG 创建完成"
           echo "DMG_FILE=$DMG_NAME" >> $GITHUB_ENV
 
       # ── 上传 Artifact ──
@@ -161,7 +144,7 @@ jobs:
           path: "*.dmg"
           retention-days: 30
 
-      # ── 创建 Release（仅 tag 推送）──
+      # ── 创建 Release ──
       - name: 创建 Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -170,7 +153,7 @@ jobs:
           body: |
             ## 残留清理助手 v${{ github.ref_name }}
 
-            macOS 原生 App，检测并清理已卸载软件留下的所有残留。
+            macOS 原生 App，检测并清理已卸载软件的所有残留。
 
             ### 使用方法
             1. 下载 DMG，双击打开
