@@ -51,9 +51,9 @@ jobs:
         env:
           DEVELOPER_ID_P12: ${{ secrets.DEVELOPER_ID_P12 }}
           DEVELOPER_ID_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
-          NOTARIZATION_KEY_ID: ${{ secrets.NOTARIZATION_KEY_ID }}
-          NOTARIZATION_ISSUER_ID: ${{ secrets.NOTARIZATION_ISSUER_ID }}
-          NOTARIZATION_KEY: ${{ secrets.NOTARIZATION_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
           HAS_CERT: ${{ secrets.DEVELOPER_ID_P12 != '' }}
         run: |
           APP_NAME="残留清理助手"
@@ -72,34 +72,21 @@ jobs:
           DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
           codesign --force --deep --options runtime \
             --sign "$DEVELOPER_ID" \
-            --entitlements <(echo '<?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
-            <plist version="1.0"><dict>
-              <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
-              <key>com.apple.security.cs.disable-library-validation</key><true/>
-            </dict></plist>') \
+            --entitlements <(echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>') \
             "$APP_PATH"
 
-          # 公证
-          echo "📋 提交公证..."
-          mkdir -p notary_output
-          echo "$NOTARIZATION_KEY" > authkey.p8
-
+          # 公证（Apple ID + 专用密码模式，无需 App Store Connect）
+          echo "📋 提交公证（需等待 1-3 分钟）..."
           ditto -c -k --keepParent "$APP_PATH" app.zip
-
           xcrun notarytool submit app.zip \
-            --apple-id "$NOTARIZATION_KEY_ID" \
-            --team-id "$(echo $NOTARIZATION_ISSUER_ID | head -c 10)" \
-            --key authkey.p8 \
-            --key-id "$NOTARIZATION_KEY_ID" \
-            --issuer "$NOTARIZATION_ISSUER_ID" \
-            --output-format json \
-            --wait > notary_output/result.json
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --wait
 
           # 装订公证票据
           echo "📎 装订公证票据..."
           xcrun stapler staple "$APP_PATH"
-
           echo "✅ 签名公证完成"
 
       - name: Ad-hoc 签名（无证书时）

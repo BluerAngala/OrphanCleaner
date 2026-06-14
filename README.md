@@ -139,59 +139,67 @@ cp -r Build/残留清理助手.app ~/Applications/
 
 Apple 要求所有分发的 App 必须签名公证，否则打开时会提示"无法验证是否包含恶意软件"。
 
-### 你需要准备（一次性，10 分钟）
+### 你需要准备（一次性，15 分钟）
 
 | 材料 | 怎么拿到 |
 |------|----------|
-| Developer ID 证书 | Apple 开发者网站下载 |
-| App Store Connect API 密钥 | App Store Connect 网站生成 |
+| Developer ID 证书 (.p12) | Apple 开发者网站下载 |
+| Apple 专用密码 | appleid.apple.com 生成 |
 
-### 第 1 步：获取证书
+### 第 1 步：生成证书文件
 
 ```bash
-# 1. 在终端生成一个申请文件
+cd ~/Documents/AppleProjects/OrphanCleaner
+
+# 生成申请文件（一路回车，设个密码记住）
 openssl req -new -newkey rsa:2048 -keyout devid.key -out devid.csr \
   -subj "/emailAddress=你的AppleID邮箱/CN=你的名字"
 ```
 
-2. 打开 https://developer.apple.com/account/resources/certificates
-3. 点右上角 **⊕** → 选 **Developer ID Application** → 上传刚才生成的 `devid.csr`
-4. 下载证书，双击安装到钥匙串
-5. 打开「钥匙串访问」App → 找到刚装的证书 → 右键 **导出** → 格式选 `.p12` → 设一个密码（**记住它**）
+2. 打开 https://developer.apple.com/account/resources/certificates → **⊕** → **Developer ID Application** → 上传 `devid.csr`
+3. 下载证书到项目目录，然后合成 p12：
 
-### 第 2 步：获取 API 密钥
+```bash
+openssl pkcs12 -export -inkey devid.key -in developerID_application.cer -out DeveloperID.p12
+# 先输 CSR 密码，再设一个新密码（记住它）
+```
 
-1. 打开 https://appstoreconnect.apple.com/access/integrations/api
-2. 点 **⊕** → 名称随便填 → 权限选 **Developer** → 生成
-3. 下载 `.p8` 文件，**记录页面显示的 Issuer ID 和 Key ID**（关掉页面就看不到了）
+4. 生成 base64：
 
-### 第 3 步：填入 GitHub（让 CI 自动签名）
+```bash
+base64 -i DeveloperID.p12 | pbcopy
+```
+
+### 第 2 步：获取专用密码
+
+1. 打开 https://appleid.apple.com → 登录
+2. 左侧 **App 专用密码** → 点 **⊕** → 名称填 `Notarization`
+3. 复制生成的 `xxxx-xxxx-xxxx-xxxx`（只显示一次）
+
+### 第 3 步：填入 GitHub
 
 打开 https://github.com/BluerAngala/OrphanCleaner/settings/secrets/actions
 
-点 **New repository secret**，依次添加以下 5 个：
+点 **New repository secret**，依次添加 5 个：
 
-| Name | Value（怎么填） |
-|------|----------------|
-| `DEVELOPER_ID_P12` | 终端执行 `base64 -i 导出的文件.p12`，复制结果粘贴 |
+| Name | Value |
+|------|-------|
+| `DEVELOPER_ID_P12` | ⌘V 粘贴第 1 步复制的 base64 |
 | `DEVELOPER_ID_PASSWORD` | 导出 p12 时设的密码 |
-| `NOTARIZATION_KEY_ID` | 第 2 步的 **Key ID**（10 位字母数字） |
-| `NOTARIZATION_ISSUER_ID` | 第 2 步的 **Issuer ID**（UUID 格式） |
-| `NOTARIZATION_KEY` | 执行 `cat AuthKey_XXXXX.p8`，复制全部内容粘贴 |
+| `APPLE_ID` | 你的 Apple ID 邮箱 |
+| `APPLE_TEAM_ID` | 执行 `openssl x509 -in developerID_application.cer -noout -subject \| grep -oE 'OU = [A-Z0-9]+' \| cut -d' ' -f3` 查看 |
+| `NOTARIZATION_PASSWORD` | 第 2 步的 `xxxx-xxxx-xxxx-xxxx` |
 
-> 填完后，下次推送 tag 自动生成的 DMG 就是签名版，双击打开无警告 ✅
+> 填完后，推送 tag 自动生成的 DMG 就是签名版，双击打开无警告 ✅
 
 ### 本地签名（可选）
 
 如果你不想配置 CI，只想在自己电脑上签名：
 
 ```bash
-# 先设三个环境变量
-export NOTARIZATION_KEY_ID="你的KeyID"
-export NOTARIZATION_ISSUER_ID="你的IssuerID"
-export NOTARIZATION_KEY_PATH="/path/to/AuthKey_XXXXX.p8"
-
-# 一键签名公证
+export APPLE_ID="你的邮箱"
+export APPLE_TEAM_ID="你的TeamID"
+export NOTARIZATION_PASSWORD="专用密码"
 ./sign_and_notarize.sh
 ```
 

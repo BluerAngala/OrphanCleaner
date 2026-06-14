@@ -15,4 +15,8 @@ xcuserdata/
 
 
 # Packaged app bundle
-*.app
+*.app*.p12
+*.key
+*.csr
+*_base64*
+*.p8
