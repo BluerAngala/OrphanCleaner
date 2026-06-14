@@ -63,20 +63,34 @@ jobs:
           APP_NAME="残留清理助手"
           APP_PATH="Build/$APP_NAME.app"
 
-          # 导入证书
+          # 从 p12 提取证书和私钥（绕过 keychain）
           echo "$DEVELOPER_ID_P12" | base64 -d > cert.p12
+          openssl pkcs12 -in cert.p12 -nocerts -nodes -passin pass:"$DEVELOPER_ID_PASSWORD" -out key.pem 2>/dev/null
+          openssl pkcs12 -in cert.p12 -clcerts -nokeys -passin pass:"$DEVELOPER_ID_PASSWORD" -out cert.pem 2>/dev/null
+
+          # 合并为 identity（证书+私钥）
+          cat key.pem cert.pem > identity.pem
+
+          # 导入 keychain（用 security import identity 方式）
           security create-keychain -p temp build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p temp build.keychain
-          security import cert.p12 -k build.keychain -P "$DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
+          security import cert.p12 -k build.keychain -P "$DEVELOPER_ID_PASSWORD" -T /usr/bin/codesign -A 2>/dev/null || {
+            # 如果 p12 导入失败，尝试用 openssl 提取的 pem
+            security import identity.pem -k build.keychain -P "" -T /usr/bin/codesign -A
+          }
+          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain 2>/dev/null || true
 
           # 签名
           echo "✍️  Developer ID 签名..."
           DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+          if [ -z "$DEVELOPER_ID" ]; then
+            echo "❌ 找不到签名身份"
+            security find-identity -v -p basic
+            exit 1
+          fi
           codesign --force --deep --options runtime \
             --sign "$DEVELOPER_ID" \
-            --entitlements <(echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>') \
             "$APP_PATH"
 
           # 公证（Apple ID + 专用密码模式，无需 App Store Connect）
