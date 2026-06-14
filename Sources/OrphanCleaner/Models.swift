@@ -29,19 +29,45 @@ let neverDeletePaths: Set<String> = {
 
 // MARK: - 扫描位置
 enum ScanLocation: String, CaseIterable, Identifiable {
+    // ── ~/Library 文件残留 ──
     case applicationSupport = "Application Support"
     case caches = "Caches"
     case logs = "Logs"
     case preferences = "Preferences"
     case webKit = "WebKit"
     case savedState = "Saved Application State"
+    
+    // ── 启动项残留（LaunchAgents / LaunchDaemons）──
+    case launchAgents = "LaunchAgents"
+    case systemLaunchAgents = "/Library/LaunchAgents"
+    case systemLaunchDaemons = "/Library/LaunchDaemons"
+    
+    // ── 系统注册表残留（CLI 工具采集）──
+    case loginItems = "loginItems"
+    case finderExtensions = "finderExtensions"
+    case disabledCache = "disabledCache"
+    
     /// 虚拟分类：存放各位置扫描出的空目录
     case emptyDirs = ""
     
-    /// 实际扫描的路径（不含虚拟分类）
-    static let scanLocations: [ScanLocation] = [
+    /// 文件扫描位置
+    static let fileScanLocations: [ScanLocation] = [
         .applicationSupport, .caches, .logs, .preferences, .webKit, .savedState
     ]
+    
+    /// 启动项扫描位置
+    static let launchScanLocations: [ScanLocation] = [
+        .launchAgents, .systemLaunchAgents, .systemLaunchDaemons
+    ]
+    
+    /// 注册表扫描位置（CLI 工具）
+    static let registryScanLocations: [ScanLocation] = [
+        .loginItems, .finderExtensions, .disabledCache
+    ]
+    
+    /// 全部扫描位置
+    static let scanLocations: [ScanLocation] =
+        fileScanLocations + launchScanLocations + registryScanLocations
     
     var id: String {
         switch self {
@@ -51,6 +77,14 @@ enum ScanLocation: String, CaseIterable, Identifiable {
     }
     
     /// 中文显示名
+    /// 是否为注册表类型（非文件/目录残留）
+    var isRegistryType: Bool {
+        switch self {
+        case .loginItems, .finderExtensions, .disabledCache: return true
+        default: return false
+        }
+    }
+    
     var displayName: String {
         switch self {
         case .applicationSupport: return "应用支持"
@@ -59,18 +93,30 @@ enum ScanLocation: String, CaseIterable, Identifiable {
         case .preferences: return "偏好设置"
         case .webKit: return "网页缓存"
         case .savedState: return "窗口状态"
+        case .launchAgents: return "用户启动项"
+        case .systemLaunchAgents: return "系统启动项"
+        case .systemLaunchDaemons: return "系统守护进程"
+        case .loginItems: return "登录项残留"
+        case .finderExtensions: return "扩展残留"
+        case .disabledCache: return "服务缓存残留"
         case .emptyDirs: return "空目录"
         }
     }
     
     var path: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
         switch self {
         case .emptyDirs: return ""
-        default:
-            return FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library")
-                .appendingPathComponent(rawValue)
-                .path
+        case .applicationSupport: return "\(home)/Library/Application Support"
+        case .caches: return "\(home)/Library/Caches"
+        case .logs: return "\(home)/Library/Logs"
+        case .preferences: return "\(home)/Library/Preferences"
+        case .webKit: return "\(home)/Library/WebKit"
+        case .savedState: return "\(home)/Library/Saved Application State"
+        case .launchAgents: return "\(home)/Library/LaunchAgents"
+        case .systemLaunchAgents: return "/Library/LaunchAgents"
+        case .systemLaunchDaemons: return "/Library/LaunchDaemons"
+        case .loginItems, .finderExtensions, .disabledCache: return ""
         }
     }
     
@@ -82,6 +128,12 @@ enum ScanLocation: String, CaseIterable, Identifiable {
         case .preferences: return "gearshape"
         case .webKit: return "globe"
         case .savedState: return "clock"
+        case .launchAgents: return "arrow.right.circle"
+        case .systemLaunchAgents: return "arrow.right.circle.fill"
+        case .systemLaunchDaemons: return "shield"
+        case .loginItems: return "person.badge.key"
+        case .finderExtensions: return "puzzlepiece.extension"
+        case .disabledCache: return "memorychip"
         case .emptyDirs: return "folder"
         }
     }
@@ -95,9 +147,36 @@ enum ScanLocation: String, CaseIterable, Identifiable {
         case .preferences: return "偏好设置，删除后应用会恢复默认设置"
         case .webKit: return "网页缓存，删除后浏览器会重新加载"
         case .savedState: return "窗口状态，删除不影响使用"
+        case .launchAgents: return "用户登录时自动启动的服务配置，删除 plist 即可"
+        case .systemLaunchAgents: return "全局登录启动项，需 sudo 删除"
+        case .systemLaunchDaemons: return "系统级守护进程，需 sudo 删除"
+        case .loginItems: return "登录项注册表残留，需 sfltool 清理"
+        case .finderExtensions: return "Finder 扩展注册残留，需 pluginkit 清理"
+        case .disabledCache: return "launchctl 禁用状态缓存，不影响系统运行"
         case .emptyDirs: return "完全空置的目录，删除没有影响"
         }
     }
+}
+
+// MARK: - 删除策略
+enum DeletionMethod {
+    /// 常规：移到废纸篓
+    case trash
+    /// 启动项：先 launchctl bootout 再删除 plist
+    case launchItem(serviceLabel: String, domain: LaunchDomain)
+    /// Finder 扩展：pluginkit -r 注销
+    case extensionPlugin(pluginPath: String)
+    /// 登录项：sfltool resetbtm 重置数据库
+    case btmReset
+    /// disabled 缓存：PlistBuddy 删除条目
+    case disabledCache(plistPath: String, entryKey: String)
+    /// 不可自动清理，仅提示
+    case manualOnly(reason: String)
+}
+
+enum LaunchDomain {
+    case user   // gui/UID
+    case system // system
 }
 
 // MARK: - 孤儿条目
@@ -108,6 +187,17 @@ struct OrphanItem: Identifiable {
     let location: ScanLocation
     let size: Int64  // bytes
     let isDirectory: Bool
+    /// 删除策略（nil 则默认 trash）
+    let deletionMethod: DeletionMethod?
+    
+    init(name: String, path: String, location: ScanLocation, size: Int64, isDirectory: Bool, deletionMethod: DeletionMethod? = nil) {
+        self.name = name
+        self.path = path
+        self.location = location
+        self.size = size
+        self.isDirectory = isDirectory
+        self.deletionMethod = deletionMethod
+    }
     
     var sizeFormatted: String {
         let formatter = ByteCountFormatter()
@@ -214,10 +304,32 @@ let systemDirNames: Set<String> = [
     "com.tencent.dtmpupdateserver",
     "com.microsoft.vscode.shipit", "com.microsoft.edgemac",
     "com.google.keystone", "com.google.googleupdater", "com.microsoft.edgeupdater",
+    
+    // === Launch 系统服务 ===
+    "com.apple.mdmclient.daemon.runatboot", "com.apple.ftpd", "com.apple.bootpd",
+    "com.apple.ftp-proxy", "com.apple.CSCSupportd", "com.apple.FolderActionsDispatcher",
+    "com.apple.Siri.agent", "com.apple.ManagedClientAgent.enrollagent",
+    "com.apple.appleseed.seedusaged.postinstall", "com.apple.ScriptMenuApp",
+    "com.apple.ManagedClient.startup", "com.apple.ManagedClient",
+    "com.apple.loginitems", "com.apple.backgroundtaskmanagementagent",
 ]
 
 // 保留的目录（属于用户自己的工具或已知安全项）
 let alwaysKeep: Set<String> = [
     "baoyu-skills", "lark-cli", "pi-web-tauri", "wechattweak",
     "new-agent", "chrome-devtools-mcp",
+    // 常见合法启动项（正在使用中的）
+    "com.cc-agent", "homebrew.mxcl.postgresql@16", "homebrew.mxcl.redis",
+    "com.github.domt4.homebrew-autoupdate",
+]
+
+// ⚠️ Launch 级别不可触碰的白名单 label
+let neverUnloadLabels: Set<String> = [
+    "com.apple.",
+]
+
+/// 系统二进制路径前缀（这些路径下的可执行文件标记为系统级，不可清理）
+let systemBinaryPathPrefixes: Set<String> = [
+    "/System/Library/", "/usr/libexec/", "/usr/sbin/", "/sbin/",
+    "/usr/bin/", "/bin/", "/Library/Apple/",
 ]

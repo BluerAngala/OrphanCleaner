@@ -92,7 +92,43 @@ class CleanerViewModel: ObservableObject {
                 }
             }
             
+            // 如果有登录项残留被清理，执行一次 BTM 重置
+            let hasBTMItems = items.contains { $0.location == .loginItems }
+            if hasBTMItems {
+                DispatchQueue.main.async {
+                    self.cleanState = .cleaning(progress: "正在重置登录项数据库...")
+                }
+                let btmOK = CleanerService.resetBTMDatabase()
+                if !btmOK {
+                    // BTM 重置可能被用户取消授权
+                }
+            }
+            
             DispatchQueue.main.async {
+                // 从状态中移除已成功清理的条目（不重新扫描）
+                let cleanedIDs = Set(
+                    items.enumerated()
+                        .filter { i, _ in
+                            // 成功的条目：索引不超过 result.deleted，且不在 failed 和 protected 中
+                            let failedNames = Set(result.failed.map { $0.0 })
+                            let protectedNames = Set(result.protected)
+                            return !failedNames.contains(items[i].name)
+                                && !protectedNames.contains(items[i].name)
+                        }
+                        .map { $0.1.id }
+                )
+                
+                for loc in self.orphans.keys {
+                    self.orphans[loc]?.removeAll { cleanedIDs.contains($0.id) }
+                    // 移除空分组
+                    if self.orphans[loc]?.isEmpty == true {
+                        self.orphans.removeValue(forKey: loc)
+                    }
+                }
+                
+                // 清理选中状态
+                self.selectedItems.subtract(cleanedIDs)
+                
                 if result.failed.isEmpty && result.protected.isEmpty {
                     self.cleanState = .complete(
                         deleted: result.deleted,
@@ -105,8 +141,6 @@ class CleanerViewModel: ObservableObject {
                         protected: result.protected
                     )
                 }
-                // 清理后重新扫描
-                self.startScan()
             }
         }
     }

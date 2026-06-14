@@ -288,7 +288,20 @@ struct OrphanScanner {
         for location in ScanLocation.scanLocations {
             let locName = location.displayName
             progress?("正在扫描 \(locName)...")
-            let items = scanLocation(location, installed: installed, includeEmptyDirs: includeEmptyDirs)
+            
+            let items: [OrphanItem]
+            switch location {
+            case .launchAgents, .systemLaunchAgents, .systemLaunchDaemons:
+                items = LaunchItemScanner.scan(location: location)
+            case .loginItems:
+                items = BTMScanner.scan()
+            case .finderExtensions:
+                items = ExtensionScanner.scan()
+            case .disabledCache:
+                items = DisabledCacheScanner.scan()
+            default:
+                items = scanLocation(location, installed: installed, includeEmptyDirs: includeEmptyDirs)
+            }
             if includeEmptyDirs {
                 // 把空目录抽到虚拟分类
                 var normalItems: [OrphanItem] = []
@@ -399,5 +412,319 @@ struct OrphanScanner {
         if !isDir.boolValue { return true }
         guard let contents = try? fm.contentsOfDirectory(atPath: path) else { return false }
         return contents.filter { $0 != ".DS_Store" }.count > 0
+    }
+}
+
+// MARK: - 启动项扫描器（LaunchAgents / LaunchDaemons）
+struct LaunchItemScanner {
+    
+    static func scan(location: ScanLocation) -> [OrphanItem] {
+        let dirPath = location.path
+        let fm = FileManager.default
+        let uid = getuid()
+        
+        guard let items = try? fm.contentsOfDirectory(atPath: dirPath) else { return [] }
+        
+        // 确定 domain
+        let domain: LaunchDomain = location == .systemLaunchDaemons ? .system : .user
+        
+        return items.compactMap { filename -> OrphanItem? in
+            guard filename.hasSuffix(".plist") else { return nil }
+            let plistPath = "\(dirPath)/\(filename)"
+            
+            // 系统保护：跳过 Apple 启动项
+            if filename.lowercased().hasPrefix("com.apple") { return nil }
+            
+            // 解析 plist
+            guard let label = readPlistKey(plistPath, key: "Label") else { return nil }
+            
+            // alwaysKeep 白名单
+            if alwaysKeep.contains(label.lowercased()) { return nil }
+            
+            // 提取可执行文件路径
+            let execPath = resolveExecutablePath(plistPath)
+            
+            // ⚠️ 安全网：可执行文件在系统路径下 → 跳过
+            if let ep = execPath, systemBinaryPathPrefixes.contains(where: { ep.hasPrefix($0) }) {
+                return nil
+            }
+            
+            // ⚠️ 安全网：无法解析可执行路径 → 保守处理，跳过（避免误判）
+            if execPath == nil && readPlistKey(plistPath, key: "Program") == nil
+                && readPlistArray(plistPath, key: "ProgramArguments") == nil {
+                // 没有任何可执行信息，可能是配置类 plist，跳过
+                return nil
+            }
+            
+            // 检查可执行文件是否存在
+            if execPath != nil && fm.fileExists(atPath: execPath!) { return nil }
+            
+            // 如果可执行文件是 .app 内嵌的，检查 .app 是否存在
+            if let ep = execPath, ep.contains(".app/") {
+                let appPath = extractAppPath(from: ep)
+                if fm.fileExists(atPath: appPath) { return nil }
+            }
+            
+            // 检查快捷启动 app（如 /Applications/XXX.app --autostart 模式）
+            if let ep = execPath, ep.hasPrefix("/Applications/") || ep.hasPrefix("\(NSHomeDirectory())/Applications/") {
+                if fm.fileExists(atPath: ep) { return nil }
+            }
+            
+            // 检查 ProgramArguments 第一个参数（可能是 app bundle 路径）
+            let args = readPlistArray(plistPath, key: "ProgramArguments")
+            if let firstArg = args?.first, firstArg.hasSuffix(".app") || firstArg.contains(".app/") {
+                let appPath = firstArg.hasSuffix(".app") ? firstArg : extractAppPath(from: firstArg)
+                if fm.fileExists(atPath: appPath) { return nil }
+            }
+            
+            // 孤儿确认
+            let plistSize = (try? fm.attributesOfItem(atPath: plistPath)[.size] as? Int64) ?? 0
+            let serviceLabel = label
+            
+            return OrphanItem(
+                name: filename.replacingOccurrences(of: ".plist", with: ""),
+                path: plistPath,
+                location: location,
+                size: plistSize,
+                isDirectory: false,
+                deletionMethod: .launchItem(serviceLabel: serviceLabel, domain: domain)
+            )
+        }
+    }
+    
+    private static func resolveExecutablePath(_ plistPath: String) -> String? {
+        // 优先 ProgramArguments 第一个元素
+        if let args = readPlistArray(plistPath, key: "ProgramArguments"), let first = args.first {
+            // 如果是 node/python 等解释器，实际目标可能是第二个参数
+            let exec = first.hasPrefix("/") ? first : "/usr/bin/\(first)"
+            if FileManager.default.fileExists(atPath: exec) && args.count > 1 {
+                let target = args[1]
+                if target.hasPrefix("/") { return target }
+                // 相对路径需要结合 WorkingDirectory
+                if let wd = readPlistKey(plistPath, key: "WorkingDirectory") {
+                    return "\(wd)/\(target)"
+                }
+            }
+            return first.hasPrefix("/") || first.hasPrefix("~") ? first : nil
+        }
+        // 其次 Program 键
+        if let prog = readPlistKey(plistPath, key: "Program") {
+            return prog
+        }
+        return nil
+    }
+    
+    private static func extractAppPath(from execPath: String) -> String {
+        // 从 /path/to/XXX.app/Contents/... 提取 XXX.app 路径
+        let comps = execPath.split(separator: "/")
+        for (i, comp) in comps.enumerated() where comp.hasSuffix(".app") {
+            return "/" + comps[0...i].joined(separator: "/")
+        }
+        return execPath
+    }
+    
+    private static func readPlistKey(_ path: String, key: String) -> String? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dict = plist as? [String: Any] else { return nil }
+        return dict[key] as? String
+    }
+    
+    private static func readPlistArray(_ path: String, key: String) -> [String]? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let dict = plist as? [String: Any] else { return nil }
+        return dict[key] as? [String]
+    }
+}
+
+// MARK: - 登录项扫描器（sfltool dumpbtm）
+struct BTMScanner {
+    
+    static func scan() -> [OrphanItem] {
+        guard let output = try? Process.run("/usr/bin/sfltool", arguments: ["dumpbtm"]) else {
+            return []
+        }
+        
+        let fm = FileManager.default
+        var orphans: [OrphanItem] = []
+        var currentName: String = ""
+        var currentType: String = ""
+        var currentURL: String = ""
+        var currentIdentifier: String = ""
+        var currentDisposition: String = ""
+        
+        for line in output.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            
+            if trimmed.hasPrefix("Name:") {
+                currentName = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                if currentName == "(null)" { currentName = "" }
+            } else if trimmed.hasPrefix("Type:") {
+                currentType = trimmed
+            } else if trimmed.hasPrefix("URL:") {
+                currentURL = String(trimmed.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                if currentURL == "(null)" { currentURL = "" }
+            } else if trimmed.hasPrefix("Identifier:") {
+                currentIdentifier = String(trimmed.dropFirst(11)).trimmingCharacters(in: .whitespaces)
+            } else if trimmed.hasPrefix("Disposition:") {
+                currentDisposition = trimmed
+            } else if trimmed.hasPrefix("Generation:") && !currentIdentifier.isEmpty {
+                // 条目结束，判断是否孤儿
+                defer {
+                    currentName = ""
+                    currentURL = ""
+                    currentIdentifier = ""
+                    currentType = ""
+                    currentDisposition = ""
+                }
+                
+                // 跳过系统条目
+                if currentIdentifier.lowercased().hasPrefix("com.apple") { continue }
+                if currentDisposition.contains("not notified") { continue } // 已标记但未实际注册
+                
+                // 跳过 still-alive 正在运行中的
+                if currentDisposition.contains("enabled") && currentDisposition.contains("notified") && !currentDisposition.contains("disallowed") {
+                    continue
+                }
+                
+                // 检查 URL 目标是否存在
+                var targetExists = false
+                if currentURL.hasPrefix("file://") {
+                    let filePath = currentURL.replacingOccurrences(of: "file://", with: "")
+                        .removingPercentEncoding ?? currentURL
+                    targetExists = fm.fileExists(atPath: filePath)
+                } else if !currentURL.isEmpty {
+                    // 绝对路径
+                    targetExists = fm.fileExists(atPath: currentURL)
+                }
+                
+                if !targetExists && !currentIdentifier.isEmpty {
+                    let displayName = currentName.isEmpty ? currentIdentifier : currentName
+                    orphans.append(OrphanItem(
+                        name: displayName,
+                        path: currentURL.isEmpty ? currentIdentifier : currentURL,
+                        location: .loginItems,
+                        size: 0,
+                        isDirectory: false,
+                        deletionMethod: .btmReset
+                    ))
+                }
+            }
+        }
+        
+        return orphans
+    }
+}
+
+// MARK: - 扩展扫描器（pluginkit）
+struct ExtensionScanner {
+    
+    static func scan() -> [OrphanItem] {
+        guard let output = try? Process.run("/usr/bin/pluginkit", arguments: ["-m", "-v", "-p", "com.apple.FinderSync"]) else {
+            return []
+        }
+        
+        let fm = FileManager.default
+        var orphans: [OrphanItem] = []
+        
+        for line in output.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            
+            // 格式: [+?-] identifier(version)  UUID  date  /path/to/PlugIn.appex
+            // 跳过系统扩展
+            if trimmed.contains("com.apple") { continue }
+            
+            // 提取路径（最后一个以 / 开头的字段）
+            let parts = trimmed.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard let pathPart = parts.last(where: { $0.hasPrefix("/") }) else { continue }
+            
+            // 检查插件文件是否存在
+            if fm.fileExists(atPath: pathPart) { continue }
+            
+            // 提取标识符
+            let identPart = parts.first ?? ""
+            let ident = identPart.replacingOccurrences(of: "+", with: "")
+                .replacingOccurrences(of: "-", with: "")
+                .replacingOccurrences(of: "?", with: "")
+            
+            // 提取版本号
+            var name = ident
+            if let parenRange = ident.range(of: "(") {
+                name = String(ident[..<parenRange.lowerBound])
+            }
+            
+            orphans.append(OrphanItem(
+                name: name,
+                path: pathPart,
+                location: .finderExtensions,
+                size: 0,
+                isDirectory: false,
+                deletionMethod: .extensionPlugin(pluginPath: pathPart)
+            ))
+        }
+        
+        return orphans
+    }
+}
+
+// MARK: - 服务缓存扫描器（disabled.plist）
+struct DisabledCacheScanner {
+    
+    static func scan() -> [OrphanItem] {
+        var orphans: [OrphanItem] = []
+        let home = NSHomeDirectory()
+        
+        // 系统级 disabled.plist
+        let sysPath = "/var/db/com.apple.xpc.launchd/disabled.plist"
+        if let sysOrphans = scanDisabledPlist(sysPath, domain: .system, home: home) {
+            orphans.append(contentsOf: sysOrphans)
+        }
+        
+        // 用户级 disabled.plist
+        let userPath = "\(home)/Library/Preferences/com.apple.xpc.launchd/disabled.\(getuid()).plist"
+        if let userOrphans = scanDisabledPlist(userPath, domain: .user, home: home) {
+            orphans.append(contentsOf: userOrphans)
+        }
+        
+        return orphans
+    }
+    
+    private static func scanDisabledPlist(_ plistPath: String, domain: LaunchDomain, home: String) -> [OrphanItem]? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: plistPath),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: plistPath)),
+              let dict = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        else { return nil }
+        
+        var orphans: [OrphanItem] = []
+        
+        for (label, _) in dict {
+            // 跳过 Apple 系统条目
+            if label.lowercased().hasPrefix("com.apple") { continue }
+            
+            // 检查对应 plist 是否存在
+            let launchDirs = domain == .system
+                ? ["/Library/LaunchDaemons", "/Library/LaunchAgents"]
+                : ["\(home)/Library/LaunchAgents"]
+            
+            let plistExists = launchDirs.contains { dir in
+                fm.fileExists(atPath: "\(dir)/\(label).plist")
+            }
+            
+            if !plistExists {
+                orphans.append(OrphanItem(
+                    name: label,
+                    path: plistPath,
+                    location: .disabledCache,
+                    size: 0,
+                    isDirectory: false,
+                    deletionMethod: .disabledCache(plistPath: plistPath, entryKey: label)
+                ))
+            }
+        }
+        
+        return orphans
     }
 }
