@@ -50,11 +50,14 @@ jobs:
 
           echo "✅ .app 创建完成: $APP_PATH"
 
-      - name: 签名（如有证书）
+      - name: 签名 & 公证（如有证书）
         if: env.HAS_CERT == 'true'
         env:
           DEV_CERT: ${{ secrets.DEV_CERT }}
           DEV_KEY: ${{ secrets.DEV_KEY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
           HAS_CERT: ${{ secrets.DEV_CERT != '' }}
         run: |
           APP_PATH="Build/残留清理助手.app"
@@ -62,7 +65,7 @@ jobs:
           echo "$DEV_CERT" | base64 -d > cert.pem
           echo "$DEV_KEY" | base64 -d > key.pem
           
-          # 合并为 identity 并导入
+          # 导入证书
           cat key.pem cert.pem > identity.pem
           security create-keychain -p temp build.keychain
           security default-keychain -s build.keychain
@@ -71,13 +74,26 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
           
           DEVELOPER_ID=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
-          if [ -n "$DEVELOPER_ID" ]; then
-            echo "✍️  签名中..."
-            codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
-            echo "✅ 已签名（右键打开警告已消除）"
-          else
+          if [ -z "$DEVELOPER_ID" ]; then
             echo "⚠️ 签名跳过"
+            exit 0
           fi
+          
+          echo "✍️  签名中..."
+          codesign --force --deep --options runtime --sign "$DEVELOPER_ID" "$APP_PATH"
+          echo "✅ 已签名"
+          
+          echo "📋 提交公证（等待 Apple 审核，约 1-3 分钟）..."
+          ditto -c -k --keepParent "$APP_PATH" app.zip
+          xcrun notarytool submit app.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$NOTARIZATION_PASSWORD" \
+            --wait --timeout 5m
+          
+          echo "📎 装订公证票据..."
+          xcrun stapler staple "$APP_PATH"
+          echo "✅ 签名公证完成，双击打开无警告"
 
       - name: Ad-hoc 签名（无证书时）
         if: env.HAS_CERT != 'true'
@@ -126,7 +142,7 @@ jobs:
 
             1. 下载 DMG，双击打开
             2. 将「残留清理助手」拖入 `Applications`
-            3. 首次打开：**右键点击 → 打开**（或直接双击，已签名公证则无警告）
+            3. **双击打开即可使用**（已签名公证，无安全警告）
 
             ### 扫描范围
 
