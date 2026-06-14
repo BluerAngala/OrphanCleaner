@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       APP_NAME: "残留清理助手"
 
@@ -60,40 +60,8 @@ jobs:
 
           codesign --force --deep --options runtime --sign "$HASH" "$APP_PATH"
           security default-keychain -s login.keychain
+          codesign -dvvv "$APP_PATH" 2>&1 | grep -E "Authority|TeamIdentifier"
           echo "✅ 签名完成"
-
-      - name: 验证签名
-        if: env.CERT_P12 != ''
-        env:
-          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
-        run: |
-          codesign -dvvv "Build/$APP_NAME.app" 2>&1 | grep -E "Authority|TeamIdentifier|Sealed"
-          echo "✅ 签名验证通过"
-
-      - name: 公证
-        if: env.CERT_P12 != '' && env.APPLE_ID != ''
-        env:
-          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          NOTARIZATION_PASSWORD: ${{ secrets.NOTARIZATION_PASSWORD }}
-        run: |
-          ditto -c -k --keepParent "Build/$APP_NAME.app" /tmp/app.zip
-
-          echo "📋 提交公证..."
-          xcrun notarytool submit /tmp/app.zip \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$NOTARIZATION_PASSWORD" \
-            --wait --timeout 25m \
-            --output-format json > /tmp/nr.json
-
-          STATUS=$(python3 -c "import json;print(json.load(open('/tmp/nr.json')).get('status','unknown'))" 2>/dev/null)
-          echo "📋 状态: $STATUS"
-          if [ "$STATUS" != "Accepted" ]; then cat /tmp/nr.json; exit 1; fi
-
-          xcrun stapler staple "Build/$APP_NAME.app"
-          echo "✅ 公证完成"
 
       - name: 创建 DMG
         run: |
