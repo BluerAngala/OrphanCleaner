@@ -39,6 +39,37 @@ jobs:
             cp -r Sources/OrphanCleaner/Resources/* "$APP_PATH/Contents/Resources/" 2>/dev/null || true
           fi
 
+      - name: Developer ID 签名
+        if: env.CERT_P12 != ''
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_PASSWORD }}
+        run: |
+          APP_PATH="Build/$APP_NAME.app"
+          echo "$CERT_P12" | base64 -d > /tmp/cert.p12
+
+          security create-keychain -p temp build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p temp build.keychain
+          security import /tmp/cert.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign -A
+          security set-key-partition-list -S apple-tool:,apple: -s -k temp build.keychain
+          rm -f /tmp/cert.p12
+
+          HASH=$(security find-identity -v -p basic | grep "Developer ID Application" | head -1 | grep -oE '[A-F0-9]{40}')
+          if [ -z "$HASH" ]; then echo "❌ 证书导入失败"; exit 1; fi
+
+          codesign --force --deep --options runtime --sign "$HASH" "$APP_PATH"
+          security default-keychain -s login.keychain
+          echo "✅ 签名完成"
+
+      - name: 验证签名
+        if: env.CERT_P12 != ''
+        env:
+          CERT_P12: ${{ secrets.DEVELOPER_ID_P12 }}
+        run: |
+          codesign -dvvv "Build/$APP_NAME.app" 2>&1 | grep -E "Authority|TeamIdentifier"
+          echo "✅ 签名验证通过"
+
       - name: 创建 DMG
         run: |
           DMG_NAME="OrphanCleaner.dmg"
