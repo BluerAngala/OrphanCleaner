@@ -60,7 +60,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: "*.dmg"
+          files: "OrphanCleaner.dmg"
           body: "## 仿win自动清理工具 ${{ github.ref_name }}\n\nmacOS 原生 App。\n\n### 使用方法\n1. 下载 DMG，双击打开\n2. 将「仿win自动清理工具」拖入 Applications\n3. 打开即可使用\n\n### 扫描范围\n- 文件残留：~/Library 下 6 个目录\n- 启动项残留：LaunchAgents/LaunchDaemons\n- 登录项残留：BTM 数据库幽灵条目\n- 扩展残留：Finder 同步扩展注册残余\n- 服务缓存：launchctl disabled.plist 残留\n\n### 安全\n五层过滤 + 路径安全网 + 二次确认 + 废纸篓（可恢复）"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

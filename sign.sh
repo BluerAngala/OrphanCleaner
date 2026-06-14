@@ -11,7 +11,7 @@ set -e
 
 APP_NAME="仿win自动清理工具"
 APP_PATH="Build/$APP_NAME.app"
-DMG_NAME="${APP_NAME}.dmg"
+DMG_NAME="OrphanCleaner.dmg"
 DEV_TEAM="SXC84F45PT"
 
 cd "$(dirname "$0")"
